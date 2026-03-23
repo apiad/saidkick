@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Saidkick",
+  "version": "1.2",
+  "description": "Remote browser inspection and automation tool.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "debugger"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["main_world.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Saidkick E2E Test Page</title>
+</head>
+<body>
+    <h1>Saidkick E2E Test</h1>
+    
+    <div id="status">Ready</div>
+    
+    <button id="click-me" onclick="document.getElementById('status').innerText = 'Clicked'; console.log('Button clicked');">Click Me</button>
+    
+    <input type="text" id="type-here" placeholder="Type here" oninput="document.getElementById('status').innerText = this.value; console.log('Typed: ' + this.value);">
+    
+    <select id="select-me" onchange="document.getElementById('status').innerText = 'Selected: ' + this.value; console.log('Selected: ' + this.value);">
+        <option value="none">Choose one</option>
+        <option value="opt1">Option 1</option>
+        <option value="opt2">Option 2</option>
+    </select>
+
+    <div id="dynamic-content"></div>
+
+    <script>
+        console.log("Page loaded");
+        function addContent(text) {
+            const div = document.createElement('div');
+            div.className = 'dynamic-item';
+            div.innerText = text;
+            document.getElementById('dynamic-content').appendChild(div);
+            console.log("Added content: " + text);
+        }
+    </script>
+</body>
+</html>
