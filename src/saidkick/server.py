@@ -44,25 +44,38 @@ class SelectRequest(SelectorRequest):
 class SaidkickManager:
     def __init__(self, max_logs: int = 100):
         self.logs = deque(maxlen=max_logs)
-        self.active_connections: List[WebSocket] = []
+        self.connections: Dict[str, WebSocket] = {}
         self.pending_requests: Dict[str, asyncio.Future] = {}
 
-    async def add_connection(self, websocket: WebSocket):
+    def _random_browser_id(self) -> str:
+        # 4 hex chars = 65k space, ample for expected usage.
+        return "br-" + secrets.token_hex(2)
+
+    def generate_browser_id(self) -> str:
+        # Avoid collision with an already-connected browser.
+        for _ in range(1000):
+            bid = self._random_browser_id()
+            if bid not in self.connections:
+                return bid
+        raise RuntimeError("could not generate unique browser_id after 1000 attempts")
+
+    async def add_connection(self, websocket: WebSocket) -> str:
         await websocket.accept()
-        client_host = websocket.client.host if websocket.client else "unknown"
-        logger.info(f"[status] Tab connected: {client_host}")
-        self.active_connections.append(websocket)
-        return client_host
+        browser_id = self.generate_browser_id()
+        self.connections[browser_id] = websocket
+        logger.info(f"[status] Browser connected: {browser_id}")
+        return browser_id
 
-    def remove_connection(self, websocket: WebSocket, client_host: str):
-        logger.info(f"[status] Tab disconnected: {client_host}")
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
+    def remove_connection(self, browser_id: str):
+        if browser_id in self.connections:
+            del self.connections[browser_id]
+            logger.info(f"[status] Browser disconnected: {browser_id}")
 
-    def handle_log(self, message: Dict[str, Any]):
+    def handle_log(self, browser_id: str, message: Dict[str, Any]):
         level = message.get("level", "info").upper()
         content = message.get("data")
-        logger.info(f"[BROWSER] {level}: {content}")
+        logger.info(f"[BROWSER {browser_id}] {level}: {content}")
+        message = {**message, "browser_id": browser_id}
         self.logs.append(message)
 
     def handle_response(self, message: Dict[str, Any]):

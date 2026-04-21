@@ -23,3 +23,29 @@ def test_parse_tab_id_valid():
 def test_parse_tab_id_invalid_raises(bad):
     with pytest.raises(ValueError):
         parse_tab_id(bad)
+
+
+import re
+from saidkick.server import SaidkickManager
+
+
+def test_generate_browser_id_format():
+    m = SaidkickManager()
+    for _ in range(100):
+        bid = m.generate_browser_id()
+        assert re.match(r"^br-[0-9a-f]{4}$", bid), f"bad format: {bid}"
+
+
+def test_generate_browser_id_avoids_collision():
+    m = SaidkickManager()
+    m.connections = {"br-aaaa": object()}  # type: ignore[assignment]
+    sequence = iter(["br-aaaa", "br-bbbb"])
+    m._random_browser_id = lambda: next(sequence)  # type: ignore[attr-defined]
+    bid = m.generate_browser_id()
+    assert bid == "br-bbbb"
+
+
+def test_manager_connections_is_dict():
+    m = SaidkickManager()
+    assert isinstance(m.connections, dict)
+    assert m.connections == {}
