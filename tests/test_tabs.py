@@ -231,3 +231,16 @@ def test_dom_routes_to_correct_browser():
     assert seen["browser_id"] == "br-aaaa"
     assert seen["payload"]["tab_id"] == 7
     assert seen["payload"]["css"] == ".foo"
+
+
+def test_console_browser_filter():
+    manager.logs.clear()
+    manager.logs.append({"level": "info", "data": "from A", "browser_id": "br-aaaa"})
+    manager.logs.append({"level": "info", "data": "from B", "browser_id": "br-bbbb"})
+    manager.logs.append({"level": "info", "data": "also A", "browser_id": "br-aaaa"})
+
+    r = TestClient(app).get("/console?browser=br-aaaa")
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data) == 2
+    assert all(e["browser_id"] == "br-aaaa" for e in data)

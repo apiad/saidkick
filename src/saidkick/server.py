@@ -127,10 +127,14 @@ class SaidkickManager:
                 status_code=504, detail="Browser response timeout"
             ) from e
 
-    def get_logs(self, limit: int = 100, grep: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_logs(
+        self, limit: int = 100,
+        grep: Optional[str] = None, browser: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         all_logs = list(self.logs)
+        if browser:
+            all_logs = [l for l in all_logs if l.get("browser_id") == browser]
         if grep:
-            import re
             pattern = re.compile(grep)
             all_logs = [l for l in all_logs if pattern.search(str(l.get("data", "")))]
         return all_logs[-limit:] if limit > 0 else all_logs
@@ -158,8 +162,12 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.remove_connection(browser_id)
 
 @app.get("/console")
-async def get_console(limit: int = 100, grep: Optional[str] = None):
-    return manager.get_logs(limit, grep)
+async def get_console(
+    limit: int = 100,
+    grep: Optional[str] = None,
+    browser: Optional[str] = None,
+):
+    return manager.get_logs(limit=limit, grep=grep, browser=browser)
 
 @app.get("/dom")
 async def get_dom(
