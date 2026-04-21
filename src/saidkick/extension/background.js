@@ -1,4 +1,5 @@
 let socket = null;
+let browserId = null;
 const SERVER_URL = "ws://localhost:6992/ws";
 const logQueue = [];
 
@@ -26,22 +27,53 @@ function connect() {
         const message = JSON.parse(event.data);
         const { type, id, payload } = message;
 
-        // Get all tabs
-        const tabs = await chrome.tabs.query({});
-        let tab = tabs.find(t => t.active && t.url && !t.url.startsWith('chrome://'));
-        if (!tab) {
-            tab = tabs.find(t => t.url && !t.url.startsWith('chrome://') && (t.url.includes('localhost:8000') || t.url.includes('localhost:8088')));
-        }
-        if (!tab) {
-            tab = tabs.find(t => t.url && !t.url.startsWith('chrome://'));
+        if (type === "HELLO") {
+            browserId = message.browser_id;
+            console.log(`Saidkick: connected as ${browserId}`);
+            return;
         }
 
-        if (!tab) {
+        if (type === "LIST_TABS") {
+            try {
+                const rawTabs = await chrome.tabs.query({});
+                const tabs = rawTabs
+                    .filter(t => t.url && !t.url.startsWith("chrome://")
+                        && !t.url.startsWith("chrome-extension://")
+                        && !t.url.startsWith("devtools://"))
+                    .map(t => ({
+                        id: t.id,
+                        url: t.url,
+                        title: t.title,
+                        active: t.active,
+                        windowId: t.windowId,
+                    }));
+                socket.send(JSON.stringify({
+                    type: "RESPONSE", id, success: true, payload: tabs,
+                }));
+            } catch (err) {
+                socket.send(JSON.stringify({
+                    type: "RESPONSE", id, success: false, payload: err.toString(),
+                }));
+            }
+            return;
+        }
+
+        // All remaining commands target a specific tab_id supplied in payload.
+        const tabId = payload?.tab_id;
+        if (typeof tabId !== "number") {
             socket.send(JSON.stringify({
-                type: "RESPONSE",
-                id: id,
-                success: false,
-                payload: "No scriptable tab found"
+                type: "RESPONSE", id, success: false, payload: "tab_id required",
+            }));
+            return;
+        }
+
+        let tab;
+        try {
+            tab = await chrome.tabs.get(tabId);
+        } catch (err) {
+            socket.send(JSON.stringify({
+                type: "RESPONSE", id, success: false,
+                payload: `tab not found: ${tabId}`,
             }));
             return;
         }
@@ -53,31 +85,23 @@ function connect() {
                 chrome.tabs.sendMessage(tab.id, { type, payload }, (response) => {
                     if (chrome.runtime.lastError) {
                         socket.send(JSON.stringify({
-                            type: "RESPONSE",
-                            id: id,
-                            success: false,
-                            payload: chrome.runtime.lastError.message
+                            type: "RESPONSE", id, success: false,
+                            payload: chrome.runtime.lastError.message,
                         }));
                     } else {
                         socket.send(JSON.stringify({
-                            type: "RESPONSE",
-                            id: id,
-                            success: response.success,
-                            payload: response.payload
+                            type: "RESPONSE", id,
+                            success: response.success, payload: response.payload,
                         }));
                     }
                 });
             } catch (err) {
                 socket.send(JSON.stringify({
-                    type: "RESPONSE",
-                    id: id,
-                    success: false,
-                    payload: err.toString()
+                    type: "RESPONSE", id, success: false, payload: err.toString(),
                 }));
             }
         } else if (type === "EXECUTE") {
             try {
-                // Use chrome.debugger to bypass CSP
                 await new Promise((resolve, reject) => {
                     chrome.debugger.attach(debugTarget, "1.3", () => {
                         if (chrome.runtime.lastError) {
@@ -91,45 +115,34 @@ function connect() {
                         }
                     });
                 });
-
-                // Enable Runtime
-                await new Promise(resolve => chrome.debugger.sendCommand(debugTarget, "Runtime.enable", {}, resolve));
-
-                chrome.debugger.sendCommand(debugTarget, "Runtime.evaluate", {
-                    expression: payload,
-                    returnByValue: true
-                }, (result) => {
-                    if (chrome.runtime.lastError) {
-                        socket.send(JSON.stringify({
-                            type: "RESPONSE",
-                            id: id,
-                            success: false,
-                            payload: chrome.runtime.lastError.message
-                        }));
-                    } else if (result.exceptionDetails) {
-                        socket.send(JSON.stringify({
-                            type: "RESPONSE",
-                            id: id,
-                            success: false,
-                            payload: result.exceptionDetails.exception.description
-                        }));
-                    } else {
-                        socket.send(JSON.stringify({
-                            type: "RESPONSE",
-                            id: id,
-                            success: true,
-                            payload: result.result.value
-                        }));
+                await new Promise(resolve =>
+                    chrome.debugger.sendCommand(debugTarget, "Runtime.enable", {}, resolve)
+                );
+                chrome.debugger.sendCommand(
+                    debugTarget, "Runtime.evaluate",
+                    { expression: payload.code, returnByValue: true },
+                    (result) => {
+                        if (chrome.runtime.lastError) {
+                            socket.send(JSON.stringify({
+                                type: "RESPONSE", id, success: false,
+                                payload: chrome.runtime.lastError.message,
+                            }));
+                        } else if (result.exceptionDetails) {
+                            socket.send(JSON.stringify({
+                                type: "RESPONSE", id, success: false,
+                                payload: result.exceptionDetails.exception.description,
+                            }));
+                        } else {
+                            socket.send(JSON.stringify({
+                                type: "RESPONSE", id, success: true,
+                                payload: result.result.value,
+                            }));
+                        }
                     }
-                    // Keep attached for future commands or detach if desired
-                    // For now, we stay attached
-                });
+                );
             } catch (error) {
                 socket.send(JSON.stringify({
-                    type: "RESPONSE",
-                    id: id,
-                    success: false,
-                    payload: error.toString()
+                    type: "RESPONSE", id, success: false, payload: error.toString(),
                 }));
             }
         }
@@ -157,17 +170,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 });
 
-async function checkInitialTabs() {
-    const tabs = await chrome.tabs.query({url: ["*://localhost:8000/*", "*://localhost:8088/*"]});
-    for (const tab of tabs) {
-        chrome.tabs.sendMessage(tab.id, { type: "PING" }, (response) => {
-            if (chrome.runtime.lastError) {
-                // Content script might not be there, try to inject or just log
-                console.log("Saidkick: Localhost tab found but no content script responding");
-            }
-        });
-    }
-}
-
 connect();
-checkInitialTabs();
