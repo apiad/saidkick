@@ -132,10 +132,8 @@ class ExecuteRequest(BaseModel):
     tab: str
     code: str
 
-class SelectorRequest(BaseModel):
+class SelectorRequest(Locator):
     tab: str
-    css: Optional[str] = None
-    xpath: Optional[str] = None
     wait_ms: int = 0
 
 class TypeRequest(SelectorRequest):
@@ -294,15 +292,28 @@ async def get_dom(
     tab: str,
     css: Optional[str] = None,
     xpath: Optional[str] = None,
+    by_text: Optional[str] = None,
+    by_label: Optional[str] = None,
+    by_placeholder: Optional[str] = None,
+    within_css: Optional[str] = None,
+    nth: Optional[int] = None,
+    exact: bool = False,
+    regex: bool = False,
     all: bool = False,
     wait_ms: int = 0,
 ):
     browser_id, tab_id = _parse_or_400(tab)
+    loc = Locator(
+        css=css, xpath=xpath, by_text=by_text, by_label=by_label,
+        by_placeholder=by_placeholder, within_css=within_css,
+        nth=nth, exact=exact, regex=regex,
+    )
+    _validate_required_locator(loc)
     response = await manager.send_command(
         browser_id, "GET_DOM",
         payload={
-            "tab_id": tab_id, "css": css, "xpath": xpath,
-            "all": all, "wait_ms": wait_ms,
+            "tab_id": tab_id, "wait_ms": wait_ms, "all": all,
+            **_locator_payload(loc),
         },
         timeout=_command_timeout(wait_ms=wait_ms),
     )
@@ -326,11 +337,12 @@ async def post_execute(req: ExecuteRequest):
 @app.post("/click")
 async def post_click(req: SelectorRequest):
     browser_id, tab_id = _parse_or_400(req.tab)
+    _validate_required_locator(req)
     response = await manager.send_command(
         browser_id, "CLICK",
         payload={
-            "tab_id": tab_id, "css": req.css, "xpath": req.xpath,
-            "wait_ms": req.wait_ms,
+            "tab_id": tab_id, "wait_ms": req.wait_ms,
+            **_locator_payload(req),
         },
         timeout=_command_timeout(wait_ms=req.wait_ms),
     )
@@ -342,11 +354,13 @@ async def post_click(req: SelectorRequest):
 @app.post("/type")
 async def post_type(req: TypeRequest):
     browser_id, tab_id = _parse_or_400(req.tab)
+    _validate_required_locator(req)
     response = await manager.send_command(
         browser_id, "TYPE",
         payload={
-            "tab_id": tab_id, "css": req.css, "xpath": req.xpath,
-            "text": req.text, "clear": req.clear, "wait_ms": req.wait_ms,
+            "tab_id": tab_id, "wait_ms": req.wait_ms,
+            "text": req.text, "clear": req.clear,
+            **_locator_payload(req),
         },
         timeout=_command_timeout(wait_ms=req.wait_ms),
     )
@@ -359,12 +373,29 @@ async def post_type(req: TypeRequest):
 async def get_text(
     tab: str,
     css: Optional[str] = None,
+    xpath: Optional[str] = None,
+    by_text: Optional[str] = None,
+    by_label: Optional[str] = None,
+    by_placeholder: Optional[str] = None,
+    within_css: Optional[str] = None,
+    nth: Optional[int] = None,
+    exact: bool = False,
+    regex: bool = False,
     wait_ms: int = 0,
 ):
     browser_id, tab_id = _parse_or_400(tab)
+    loc = Locator(
+        css=css, xpath=xpath, by_text=by_text, by_label=by_label,
+        by_placeholder=by_placeholder, within_css=within_css,
+        nth=nth, exact=exact, regex=regex,
+    )
+    _validate_locator(loc)  # optional: no locator = whole body
     response = await manager.send_command(
         browser_id, "GET_TEXT",
-        payload={"tab_id": tab_id, "css": css, "wait_ms": wait_ms},
+        payload={
+            "tab_id": tab_id, "wait_ms": wait_ms,
+            **_locator_payload(loc),
+        },
         timeout=_command_timeout(wait_ms=wait_ms),
     )
     if not response.get("success"):
@@ -375,11 +406,13 @@ async def get_text(
 @app.post("/select")
 async def post_select(req: SelectRequest):
     browser_id, tab_id = _parse_or_400(req.tab)
+    _validate_required_locator(req)
     response = await manager.send_command(
         browser_id, "SELECT",
         payload={
-            "tab_id": tab_id, "css": req.css, "xpath": req.xpath,
-            "value": req.value, "wait_ms": req.wait_ms,
+            "tab_id": tab_id, "wait_ms": req.wait_ms,
+            "value": req.value,
+            **_locator_payload(req),
         },
         timeout=_command_timeout(wait_ms=req.wait_ms),
     )

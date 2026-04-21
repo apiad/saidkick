@@ -36,7 +36,12 @@ def test_dom_anchoring_params():
     assert response.json() == "<div>Match</div>"
     mock_send.assert_called_with(
         "br-aaaa", "GET_DOM",
-        payload={"tab_id": 3, "css": ".test", "xpath": None, "all": True, "wait_ms": 0},
+        payload={
+            "tab_id": 3, "wait_ms": 0, "all": True,
+            "css": ".test", "xpath": None,
+            "by_text": None, "by_label": None, "by_placeholder": None,
+            "within_css": None, "nth": None, "exact": False, "regex": False,
+        },
         timeout=10.0,
     )
 
@@ -52,7 +57,12 @@ def test_interaction_endpoints():
         assert response.status_code == 200
         mock_send.assert_called_with(
             "br-aaaa", "CLICK",
-            payload={"tab_id": 1, "css": "#btn", "xpath": None, "wait_ms": 0},
+            payload={
+                "tab_id": 1, "wait_ms": 0,
+                "css": "#btn", "xpath": None,
+                "by_text": None, "by_label": None, "by_placeholder": None,
+                "within_css": None, "nth": None, "exact": False, "regex": False,
+            },
             timeout=10.0,
         )
 
@@ -63,8 +73,11 @@ def test_interaction_endpoints():
         mock_send.assert_called_with(
             "br-aaaa", "TYPE",
             payload={
-                "tab_id": 2, "css": "#input", "xpath": None,
-                "text": "hello", "clear": True, "wait_ms": 0,
+                "tab_id": 2, "wait_ms": 0,
+                "text": "hello", "clear": True,
+                "css": "#input", "xpath": None,
+                "by_text": None, "by_label": None, "by_placeholder": None,
+                "within_css": None, "nth": None, "exact": False, "regex": False,
             },
             timeout=10.0,
         )
@@ -76,8 +89,10 @@ def test_interaction_endpoints():
         mock_send.assert_called_with(
             "br-aaaa", "SELECT",
             payload={
-                "tab_id": 3, "css": None, "xpath": "//select",
-                "value": "opt1", "wait_ms": 0,
+                "tab_id": 3, "wait_ms": 0, "value": "opt1",
+                "css": None, "xpath": "//select",
+                "by_text": None, "by_label": None, "by_placeholder": None,
+                "within_css": None, "nth": None, "exact": False, "regex": False,
             },
             timeout=10.0,
         )
