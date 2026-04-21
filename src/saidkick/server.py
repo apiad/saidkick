@@ -15,6 +15,7 @@ logger = logging.getLogger("saidkick")
 
 
 _TAB_ID_RE = re.compile(r"^br-[0-9a-f]{4}:(\d+)$")
+_BROWSER_ID_RE = re.compile(r"^br-[0-9a-f]{4}$")
 
 
 def parse_tab_id(composite: str) -> Tuple[str, int]:
@@ -26,6 +27,44 @@ def parse_tab_id(composite: str) -> Tuple[str, int]:
         raise ValueError(f"invalid tab ID: expected 'br-XXXX:N', got {composite!r}")
     browser_id, tab_str = composite.rsplit(":", 1)
     return browser_id, int(tab_str)
+
+
+def _raise_for_extension_error(payload: str) -> None:
+    """Map a failure string from the extension into an HTTPException.
+
+    500 is reserved for server bugs; anything caller-observable gets a 4xx or
+    502/504. The extension's message strings are ours, so keyword matches are
+    deterministic.
+    """
+    m = (payload or "").lower()
+    if ("element not found" in m
+        or "option not found" in m
+        or "tab not found" in m):
+        raise HTTPException(status_code=404, detail=payload)
+    if ("ambiguous selector" in m
+        or "element is not a" in m
+        or "no selector provided" in m
+        or "invalid url" in m):
+        raise HTTPException(status_code=400, detail=payload)
+    if "timeout" in m or "not resolved within" in m:
+        raise HTTPException(status_code=504, detail=payload)
+    raise HTTPException(status_code=502, detail=payload)
+
+
+def _validate_http_url(url: str) -> None:
+    """Raise HTTPException(400) if `url` is not a well-formed http(s) URL."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url or "")
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail=f"invalid url: {url!r}")
+
+
+def _validate_browser_id(browser_id: str) -> None:
+    if not isinstance(browser_id, str) or not _BROWSER_ID_RE.match(browser_id):
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid browser ID: expected 'br-XXXX', got {browser_id!r}",
+        )
 
 class ExecuteRequest(BaseModel):
     tab: str
