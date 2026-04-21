@@ -1,15 +1,31 @@
 import asyncio
 import json
 import logging
+import re
+import secrets
 import uuid
 from collections import deque
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 # Configure logger
 logger = logging.getLogger("saidkick")
+
+
+_TAB_ID_RE = re.compile(r"^br-[0-9a-f]{4}:(\d+)$")
+
+
+def parse_tab_id(composite: str) -> Tuple[str, int]:
+    """Parse 'br-XXXX:N' into (browser_id, tab_id). Raises ValueError on malformed input."""
+    if not isinstance(composite, str):
+        raise ValueError(f"tab ID must be a string, got {type(composite).__name__}")
+    m = _TAB_ID_RE.match(composite)
+    if not m:
+        raise ValueError(f"invalid tab ID: expected 'br-XXXX:N', got {composite!r}")
+    browser_id, tab_str = composite.rsplit(":", 1)
+    return browser_id, int(tab_str)
 
 class ExecuteRequest(BaseModel):
     code: str
