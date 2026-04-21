@@ -289,6 +289,23 @@ async def post_type(req: TypeRequest):
     return response.get("payload")
 
 
+@app.get("/text")
+async def get_text(
+    tab: str,
+    css: Optional[str] = None,
+    wait_ms: int = 0,
+):
+    browser_id, tab_id = _parse_or_400(tab)
+    response = await manager.send_command(
+        browser_id, "GET_TEXT",
+        payload={"tab_id": tab_id, "css": css, "wait_ms": wait_ms},
+        timeout=_command_timeout(wait_ms=wait_ms),
+    )
+    if not response.get("success"):
+        _raise_for_extension_error(response.get("payload"))
+    return response.get("payload")
+
+
 @app.post("/select")
 async def post_select(req: SelectRequest):
     browser_id, tab_id = _parse_or_400(req.tab)
