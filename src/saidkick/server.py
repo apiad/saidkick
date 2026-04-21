@@ -470,6 +470,40 @@ async def post_open(req: OpenRequest):
     }
 
 
+@app.get("/screenshot")
+async def get_screenshot(
+    tab: str,
+    css: Optional[str] = None,
+    xpath: Optional[str] = None,
+    by_text: Optional[str] = None,
+    by_label: Optional[str] = None,
+    by_placeholder: Optional[str] = None,
+    within_css: Optional[str] = None,
+    nth: Optional[int] = None,
+    exact: bool = False,
+    regex: bool = False,
+    full_page: bool = False,
+):
+    browser_id, tab_id = _parse_or_400(tab)
+    loc = Locator(
+        css=css, xpath=xpath, by_text=by_text, by_label=by_label,
+        by_placeholder=by_placeholder, within_css=within_css,
+        nth=nth, exact=exact, regex=regex,
+    )
+    _validate_locator(loc)
+    response = await manager.send_command(
+        browser_id, "SCREENSHOT",
+        payload={
+            "tab_id": tab_id, "full_page": full_page,
+            **_locator_payload(loc),
+        },
+        timeout=_command_timeout(timeout_ms=15000),
+    )
+    if not response.get("success"):
+        _raise_for_extension_error(response.get("payload"))
+    return response.get("payload")
+
+
 @app.post("/press")
 async def post_press(req: PressRequest):
     browser_id, tab_id = _parse_or_400(req.tab)
