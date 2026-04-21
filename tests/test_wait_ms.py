@@ -52,3 +52,22 @@ def test_wait_ms_defaults_to_zero():
     assert r.status_code == 200
     payload = seen["kwargs"].get("payload") or (seen["args"][2] if len(seen["args"]) >= 3 else None)
     assert payload["wait_ms"] == 0
+
+
+from saidkick.server import _command_timeout
+
+
+def test_command_timeout_defaults_to_ten():
+    assert _command_timeout() == 10.0
+
+
+def test_command_timeout_grows_with_wait_ms():
+    assert _command_timeout(wait_ms=5000) >= 7.0
+
+
+def test_command_timeout_grows_with_timeout_ms():
+    assert _command_timeout(timeout_ms=20000) >= 22.0
+
+
+def test_command_timeout_uses_max_of_inputs():
+    assert _command_timeout(wait_ms=5000, timeout_ms=15000) >= 17.0

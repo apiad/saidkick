@@ -37,6 +37,7 @@ def test_dom_anchoring_params():
     mock_send.assert_called_with(
         "br-aaaa", "GET_DOM",
         payload={"tab_id": 3, "css": ".test", "xpath": None, "all": True, "wait_ms": 0},
+        timeout=10.0,
     )
 
 
@@ -52,6 +53,7 @@ def test_interaction_endpoints():
         mock_send.assert_called_with(
             "br-aaaa", "CLICK",
             payload={"tab_id": 1, "css": "#btn", "xpath": None, "wait_ms": 0},
+            timeout=10.0,
         )
 
         response = client.post("/type", json={
@@ -64,6 +66,7 @@ def test_interaction_endpoints():
                 "tab_id": 2, "css": "#input", "xpath": None,
                 "text": "hello", "clear": True, "wait_ms": 0,
             },
+            timeout=10.0,
         )
 
         response = client.post("/select", json={
@@ -76,4 +79,5 @@ def test_interaction_endpoints():
                 "tab_id": 3, "css": None, "xpath": "//select",
                 "value": "opt1", "wait_ms": 0,
             },
+            timeout=10.0,
         )

@@ -66,6 +66,17 @@ def _validate_browser_id(browser_id: str) -> None:
             detail=f"invalid browser ID: expected 'br-XXXX', got {browser_id!r}",
         )
 
+
+def _command_timeout(wait_ms: int = 0, timeout_ms: int = 0) -> float:
+    """Compute the server-side asyncio.wait_for budget for an extension command.
+
+    Default 10s. Extended by the larger of wait_ms/timeout_ms plus 2s overhead
+    to leave room for extension scheduling.
+    """
+    base = 10.0
+    extension_budget_s = max(wait_ms, timeout_ms) / 1000.0
+    return max(base, extension_budget_s + 2.0)
+
 class ExecuteRequest(BaseModel):
     tab: str
     code: str
@@ -135,7 +146,8 @@ class SaidkickManager:
                 future.set_result(message)
 
     async def send_command(
-        self, browser_id: str, command_type: str, payload: Any = None
+        self, browser_id: str, command_type: str,
+        payload: Any = None, timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         ws = self.connections.get(browser_id)
         if ws is None:
@@ -155,11 +167,13 @@ class SaidkickManager:
         except Exception as e:
             self.pending_requests.pop(request_id, None)
             raise HTTPException(
-                status_code=503, detail=f"browser send failed: {e}"
+                status_code=502, detail=f"browser send failed: {e}"
             ) from e
 
         try:
-            response = await asyncio.wait_for(future, timeout=10.0)
+            response = await asyncio.wait_for(
+                future, timeout=timeout if timeout is not None else 10.0
+            )
             return response
         except asyncio.TimeoutError as e:
             self.pending_requests.pop(request_id, None)
@@ -224,6 +238,7 @@ async def get_dom(
             "tab_id": tab_id, "css": css, "xpath": xpath,
             "all": all, "wait_ms": wait_ms,
         },
+        timeout=_command_timeout(wait_ms=wait_ms),
     )
     if not response.get("success"):
         _raise_for_extension_error(response.get("payload"))
@@ -251,6 +266,7 @@ async def post_click(req: SelectorRequest):
             "tab_id": tab_id, "css": req.css, "xpath": req.xpath,
             "wait_ms": req.wait_ms,
         },
+        timeout=_command_timeout(wait_ms=req.wait_ms),
     )
     if not response.get("success"):
         _raise_for_extension_error(response.get("payload"))
@@ -266,6 +282,7 @@ async def post_type(req: TypeRequest):
             "tab_id": tab_id, "css": req.css, "xpath": req.xpath,
             "text": req.text, "clear": req.clear, "wait_ms": req.wait_ms,
         },
+        timeout=_command_timeout(wait_ms=req.wait_ms),
     )
     if not response.get("success"):
         _raise_for_extension_error(response.get("payload"))
@@ -281,6 +298,7 @@ async def post_select(req: SelectRequest):
             "tab_id": tab_id, "css": req.css, "xpath": req.xpath,
             "value": req.value, "wait_ms": req.wait_ms,
         },
+        timeout=_command_timeout(wait_ms=req.wait_ms),
     )
     if not response.get("success"):
         _raise_for_extension_error(response.get("payload"))

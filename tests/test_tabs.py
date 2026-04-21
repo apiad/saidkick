@@ -220,7 +220,7 @@ def test_dom_routes_to_correct_browser():
     manager.connections["br-aaaa"] = object()  # type: ignore[assignment]
 
     seen = {}
-    async def fake_send(browser_id, command_type, payload=None):
+    async def fake_send(browser_id, command_type, payload=None, **kwargs):
         seen["browser_id"] = browser_id
         seen["payload"] = payload
         return {"success": True, "payload": "<div/>"}
