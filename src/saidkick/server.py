@@ -124,20 +124,22 @@ app = FastAPI(title="Saidkick Dev Tool")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    client_host = await manager.add_connection(websocket)
+    browser_id = await manager.add_connection(websocket)
+    await websocket.send_text(json.dumps({"type": "HELLO", "browser_id": browser_id}))
     try:
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
-            if message.get("type") == "log":
-                manager.handle_log(message)
-            elif message.get("type") == "RESPONSE":
+            msg_type = message.get("type")
+            if msg_type == "log":
+                manager.handle_log(browser_id, message)
+            elif msg_type == "RESPONSE":
                 manager.handle_response(message)
     except WebSocketDisconnect:
-        manager.remove_connection(websocket, client_host)
+        manager.remove_connection(browser_id)
     except Exception as e:
-        logger.error(f"[error] WebSocket error: {e}")
-        manager.remove_connection(websocket, client_host)
+        logger.error(f"[error] WebSocket error on {browser_id}: {e}")
+        manager.remove_connection(browser_id)
 
 @app.get("/console")
 async def get_console(limit: int = 100, grep: Optional[str] = None):

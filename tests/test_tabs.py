@@ -49,3 +49,28 @@ def test_manager_connections_is_dict():
     m = SaidkickManager()
     assert isinstance(m.connections, dict)
     assert m.connections == {}
+
+
+from fastapi.testclient import TestClient
+from saidkick.server import app, manager
+
+
+def test_ws_handshake_sends_hello():
+    client = TestClient(app)
+    manager.connections.clear()
+    with client.websocket_connect("/ws") as ws:
+        hello = ws.receive_json()
+        assert hello["type"] == "HELLO"
+        assert re.match(r"^br-[0-9a-f]{4}$", hello["browser_id"])
+        assert hello["browser_id"] in manager.connections
+
+
+def test_ws_disconnect_removes_connection():
+    client = TestClient(app)
+    manager.connections.clear()
+    with client.websocket_connect("/ws") as ws:
+        hello = ws.receive_json()
+        bid = hello["browser_id"]
+        assert bid in manager.connections
+    import time; time.sleep(0.1)
+    assert bid not in manager.connections
