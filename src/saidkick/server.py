@@ -231,7 +231,7 @@ async def post_execute(req: ExecuteRequest):
         payload={"tab_id": tab_id, "code": req.code},
     )
     if not response.get("success"):
-        raise HTTPException(status_code=500, detail=response.get("payload"))
+        _raise_for_extension_error(response.get("payload"))
     return response.get("payload")
 
 
@@ -243,7 +243,7 @@ async def post_click(req: SelectorRequest):
         payload={"tab_id": tab_id, "css": req.css, "xpath": req.xpath},
     )
     if not response.get("success"):
-        raise HTTPException(status_code=500, detail=response.get("payload"))
+        _raise_for_extension_error(response.get("payload"))
     return response.get("payload")
 
 
@@ -261,7 +261,7 @@ async def post_type(req: TypeRequest):
         },
     )
     if not response.get("success"):
-        raise HTTPException(status_code=500, detail=response.get("payload"))
+        _raise_for_extension_error(response.get("payload"))
     return response.get("payload")
 
 
@@ -278,7 +278,7 @@ async def post_select(req: SelectRequest):
         },
     )
     if not response.get("success"):
-        raise HTTPException(status_code=500, detail=response.get("payload"))
+        _raise_for_extension_error(response.get("payload"))
     return response.get("payload")
 
 

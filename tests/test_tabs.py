@@ -244,3 +244,46 @@ def test_console_browser_filter():
     data = r.json()
     assert len(data) == 2
     assert all(e["browser_id"] == "br-aaaa" for e in data)
+
+
+def test_execute_element_not_found_is_404():
+    manager.connections.clear()
+    manager.connections["br-aaaa"] = object()  # type: ignore[assignment]
+
+    async def fake_send(*args, **kwargs):
+        return {"success": False, "payload": "Element not found"}
+
+    with patch.object(manager, "send_command", side_effect=fake_send):
+        r = TestClient(app).post(
+            "/execute", json={"tab": "br-aaaa:1", "code": "x"}
+        )
+    assert r.status_code == 404
+    assert r.json()["detail"] == "Element not found"
+
+
+def test_click_ambiguous_selector_is_400():
+    manager.connections.clear()
+    manager.connections["br-aaaa"] = object()  # type: ignore[assignment]
+
+    async def fake_send(*args, **kwargs):
+        return {"success": False, "payload": "Ambiguous selector: found 3 matches"}
+
+    with patch.object(manager, "send_command", side_effect=fake_send):
+        r = TestClient(app).post(
+            "/click", json={"tab": "br-aaaa:1", "css": ".btn"}
+        )
+    assert r.status_code == 400
+
+
+def test_type_unknown_extension_error_is_502():
+    manager.connections.clear()
+    manager.connections["br-aaaa"] = object()  # type: ignore[assignment]
+
+    async def fake_send(*args, **kwargs):
+        return {"success": False, "payload": "weird chrome thing"}
+
+    with patch.object(manager, "send_command", side_effect=fake_send):
+        r = TestClient(app).post(
+            "/type", json={"tab": "br-aaaa:1", "css": "#x", "text": "y"}
+        )
+    assert r.status_code == 502
