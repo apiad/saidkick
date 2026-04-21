@@ -151,6 +151,16 @@ class NavigateRequest(BaseModel):
     wait: WaitMode = "dom"
     timeout_ms: int = 15000
 
+_VALID_MODIFIERS = {"ctrl", "shift", "alt", "meta"}
+
+
+class PressRequest(Locator):
+    tab: str
+    key: str
+    modifiers: List[str] = []
+    wait_ms: int = 0
+
+
 class OpenRequest(BaseModel):
     browser: str
     url: str
@@ -458,6 +468,29 @@ async def post_open(req: OpenRequest):
         "tab": f"{req.browser}:{ext_tab_id}",
         "url": ext_payload.get("url"),
     }
+
+
+@app.post("/press")
+async def post_press(req: PressRequest):
+    browser_id, tab_id = _parse_or_400(req.tab)
+    _validate_locator(req)
+    bad = [m for m in req.modifiers if m not in _VALID_MODIFIERS]
+    if bad:
+        raise HTTPException(
+            status_code=400, detail=f"unknown modifier: {bad[0]}",
+        )
+    response = await manager.send_command(
+        browser_id, "PRESS",
+        payload={
+            "tab_id": tab_id, "key": req.key,
+            "modifiers": req.modifiers, "wait_ms": req.wait_ms,
+            **_locator_payload(req),
+        },
+        timeout=_command_timeout(wait_ms=req.wait_ms),
+    )
+    if not response.get("success"):
+        _raise_for_extension_error(response.get("payload"))
+    return response.get("payload")
 
 
 @app.get("/find")
