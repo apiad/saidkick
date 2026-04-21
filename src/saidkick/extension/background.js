@@ -50,6 +50,68 @@ const PAGE_EVENT_FOR_WAIT = {
     full: "Page.loadEventFired",
 };
 
+const MODIFIER_BITS = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
+
+function modifiersMask(mods) {
+    return (mods || []).reduce((acc, m) => acc | (MODIFIER_BITS[m] || 0), 0);
+}
+
+const KEY_TO_CDP = {
+    "Enter":      {keyCode: 13, code: "Enter",     text: "\r"},
+    "Escape":     {keyCode: 27, code: "Escape"},
+    "Tab":        {keyCode: 9,  code: "Tab",       text: "\t"},
+    "Backspace":  {keyCode: 8,  code: "Backspace"},
+    "ArrowUp":    {keyCode: 38, code: "ArrowUp"},
+    "ArrowDown":  {keyCode: 40, code: "ArrowDown"},
+    "ArrowLeft":  {keyCode: 37, code: "ArrowLeft"},
+    "ArrowRight": {keyCode: 39, code: "ArrowRight"},
+    "Home":       {keyCode: 36, code: "Home"},
+    "End":        {keyCode: 35, code: "End"},
+    "PageUp":     {keyCode: 33, code: "PageUp"},
+    "PageDown":   {keyCode: 34, code: "PageDown"},
+    "Delete":     {keyCode: 46, code: "Delete"},
+    " ":          {keyCode: 32, code: "Space",     text: " "},
+};
+
+function cdpKeyParams(key) {
+    const mapped = KEY_TO_CDP[key];
+    if (mapped) return { ...mapped, key };
+    if (key.length === 1) {
+        return {
+            keyCode: key.toUpperCase().charCodeAt(0),
+            code: "Key" + key.toUpperCase(),
+            text: key, key,
+        };
+    }
+    return { code: key, key };
+}
+
+async function dispatchKey(tabId, key, modifiers) {
+    const target = { tabId };
+    const base = cdpKeyParams(key);
+    const mods = modifiersMask(modifiers);
+    await new Promise((resolve, reject) => {
+        chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent",
+            { type: "keyDown", ...base, modifiers: mods },
+            () => chrome.runtime.lastError ? reject(chrome.runtime.lastError) : resolve()
+        );
+    });
+    if (base.text) {
+        await new Promise((resolve, reject) => {
+            chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent",
+                { type: "char", ...base, modifiers: mods },
+                () => chrome.runtime.lastError ? reject(chrome.runtime.lastError) : resolve()
+            );
+        });
+    }
+    await new Promise((resolve, reject) => {
+        chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent",
+            { type: "keyUp", ...base, modifiers: mods },
+            () => chrome.runtime.lastError ? reject(chrome.runtime.lastError) : resolve()
+        );
+    });
+}
+
 // Tabs opened BEFORE the extension was installed/reloaded have no content
 // script yet. sendToContentScript attempts sendMessage; on the classic
 // "Receiving end does not exist" error it injects content.js (and main_world.js
@@ -235,15 +297,90 @@ function connect() {
             return;
         }
 
-        if (["GET_DOM", "CLICK", "TYPE", "SELECT", "GET_TEXT"].includes(type)) {
+        if (["GET_DOM", "CLICK", "TYPE", "SELECT", "GET_TEXT", "FIND"].includes(type)) {
             sendToContentScript(tab.id, { type, payload }, id);
+        } else if (type === "PRESS") {
+            try {
+                await ensureDebuggerAttached(tab.id);
+                const hasLocator = payload.css || payload.xpath || payload.by_text
+                    || payload.by_label || payload.by_placeholder;
+                if (hasLocator) {
+                    const resp = await new Promise(resolve => {
+                        chrome.tabs.sendMessage(tab.id, { type: "FOCUS", payload }, resolve);
+                    });
+                    if (!resp || !resp.success) {
+                        socket.send(JSON.stringify({
+                            type: "RESPONSE", id, success: false,
+                            payload: resp?.payload || "focus failed",
+                        }));
+                        return;
+                    }
+                }
+                await dispatchKey(tab.id, payload.key, payload.modifiers || []);
+                socket.send(JSON.stringify({
+                    type: "RESPONSE", id, success: true,
+                    payload: { pressed: payload.key },
+                }));
+            } catch (err) {
+                socket.send(JSON.stringify({
+                    type: "RESPONSE", id, success: false,
+                    payload: err.message || String(err),
+                }));
+            }
+        } else if (type === "SCREENSHOT") {
+            try {
+                await ensureDebuggerAttached(tab.id);
+                let clip = null;
+                const hasLocator = payload.css || payload.xpath || payload.by_text
+                    || payload.by_label || payload.by_placeholder;
+                if (hasLocator) {
+                    const resp = await new Promise(resolve => {
+                        chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_RECT", payload }, resolve);
+                    });
+                    if (!resp || !resp.success) {
+                        socket.send(JSON.stringify({
+                            type: "RESPONSE", id, success: false,
+                            payload: resp?.payload || "resolve rect failed",
+                        }));
+                        return;
+                    }
+                    const r = resp.payload;
+                    clip = { x: r.x, y: r.y, width: r.width, height: r.height, scale: 1 };
+                }
+                const cdpParams = { format: "png" };
+                if (clip) cdpParams.clip = clip;
+                if (payload.full_page) cdpParams.captureBeyondViewport = true;
+                const shot = await new Promise((resolve, reject) => {
+                    chrome.debugger.sendCommand(
+                        { tabId: tab.id }, "Page.captureScreenshot", cdpParams,
+                        (result) => chrome.runtime.lastError
+                            ? reject(chrome.runtime.lastError) : resolve(result),
+                    );
+                });
+                socket.send(JSON.stringify({
+                    type: "RESPONSE", id, success: true,
+                    payload: {
+                        png_base64: shot.data,
+                        width: clip ? clip.width : 0,
+                        height: clip ? clip.height : 0,
+                    },
+                }));
+            } catch (err) {
+                socket.send(JSON.stringify({
+                    type: "RESPONSE", id, success: false,
+                    payload: err.message || String(err),
+                }));
+            }
         } else if (type === "EXECUTE") {
             try {
                 await ensureDebuggerAttached(tab.id);
                 const debugTarget = { tabId: tab.id };
+                // IIFE-wrap so user `const`/`let` don't collide between calls,
+                // and so top-level `await` works. Callers must `return` their value.
+                const wrappedCode = `(async () => {\n${payload.code}\n})()`;
                 chrome.debugger.sendCommand(
                     debugTarget, "Runtime.evaluate",
-                    { expression: payload.code, returnByValue: true },
+                    { expression: wrappedCode, returnByValue: true, awaitPromise: true },
                     (result) => {
                         if (chrome.runtime.lastError) {
                             socket.send(JSON.stringify({
