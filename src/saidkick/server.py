@@ -67,6 +67,57 @@ def _validate_browser_id(browser_id: str) -> None:
         )
 
 
+class Locator(BaseModel):
+    """Mixin: shared locator fields for every selector-using endpoint."""
+    css: Optional[str] = None
+    xpath: Optional[str] = None
+    by_text: Optional[str] = None
+    by_label: Optional[str] = None
+    by_placeholder: Optional[str] = None
+    within_css: Optional[str] = None
+    nth: Optional[int] = None
+    exact: bool = False
+    regex: bool = False
+
+
+_LOCATOR_FIELDS = ("css", "xpath", "by_text", "by_label", "by_placeholder")
+
+
+def _count_locators(loc: Locator) -> int:
+    return sum(1 for f in _LOCATOR_FIELDS if getattr(loc, f) is not None)
+
+
+def _validate_locator(loc: Locator) -> None:
+    """Shared checks that apply whether or not a locator is required."""
+    if loc.exact and loc.regex:
+        raise HTTPException(status_code=400, detail="exact and regex are mutually exclusive")
+    if _count_locators(loc) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Ambiguous locator options: specify exactly one",
+        )
+
+
+def _validate_required_locator(loc: Locator) -> None:
+    _validate_locator(loc)
+    if _count_locators(loc) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="No locator: specify one of css/xpath/by-text/by-label/by-placeholder",
+        )
+
+
+def _locator_payload(loc: Locator) -> Dict[str, Any]:
+    """Serialise locator fields for the extension payload."""
+    return {
+        "css": loc.css, "xpath": loc.xpath,
+        "by_text": loc.by_text, "by_label": loc.by_label,
+        "by_placeholder": loc.by_placeholder,
+        "within_css": loc.within_css, "nth": loc.nth,
+        "exact": loc.exact, "regex": loc.regex,
+    }
+
+
 def _command_timeout(wait_ms: int = 0, timeout_ms: int = 0) -> float:
     """Compute the server-side asyncio.wait_for budget for an extension command.
 
