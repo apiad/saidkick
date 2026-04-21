@@ -74,6 +74,7 @@ class SelectorRequest(BaseModel):
     tab: str
     css: Optional[str] = None
     xpath: Optional[str] = None
+    wait_ms: int = 0
 
 class TypeRequest(SelectorRequest):
     text: str
@@ -214,12 +215,18 @@ async def get_dom(
     css: Optional[str] = None,
     xpath: Optional[str] = None,
     all: bool = False,
+    wait_ms: int = 0,
 ):
     browser_id, tab_id = _parse_or_400(tab)
     response = await manager.send_command(
         browser_id, "GET_DOM",
-        payload={"tab_id": tab_id, "css": css, "xpath": xpath, "all": all},
+        payload={
+            "tab_id": tab_id, "css": css, "xpath": xpath,
+            "all": all, "wait_ms": wait_ms,
+        },
     )
+    if not response.get("success"):
+        _raise_for_extension_error(response.get("payload"))
     return response.get("payload")
 
 
@@ -240,7 +247,10 @@ async def post_click(req: SelectorRequest):
     browser_id, tab_id = _parse_or_400(req.tab)
     response = await manager.send_command(
         browser_id, "CLICK",
-        payload={"tab_id": tab_id, "css": req.css, "xpath": req.xpath},
+        payload={
+            "tab_id": tab_id, "css": req.css, "xpath": req.xpath,
+            "wait_ms": req.wait_ms,
+        },
     )
     if not response.get("success"):
         _raise_for_extension_error(response.get("payload"))
@@ -253,11 +263,8 @@ async def post_type(req: TypeRequest):
     response = await manager.send_command(
         browser_id, "TYPE",
         payload={
-            "tab_id": tab_id,
-            "css": req.css,
-            "xpath": req.xpath,
-            "text": req.text,
-            "clear": req.clear,
+            "tab_id": tab_id, "css": req.css, "xpath": req.xpath,
+            "text": req.text, "clear": req.clear, "wait_ms": req.wait_ms,
         },
     )
     if not response.get("success"):
@@ -271,10 +278,8 @@ async def post_select(req: SelectRequest):
     response = await manager.send_command(
         browser_id, "SELECT",
         payload={
-            "tab_id": tab_id,
-            "css": req.css,
-            "xpath": req.xpath,
-            "value": req.value,
+            "tab_id": tab_id, "css": req.css, "xpath": req.xpath,
+            "value": req.value, "wait_ms": req.wait_ms,
         },
     )
     if not response.get("success"):
