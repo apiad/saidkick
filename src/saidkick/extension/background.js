@@ -227,15 +227,23 @@ function connect() {
         if (type === "OPEN") {
             const { url, wait: waitMode, timeout_ms, activate } = payload || {};
             try {
+                // If we need to wait for a load event, open a blank tab first so we
+                // can attach the debugger + subscribe to Page events BEFORE the
+                // navigation to the real URL starts. Otherwise we race the event.
+                const needWait = waitMode && waitMode !== "none";
+                const initialUrl = needWait ? "about:blank" : url;
                 const created = await chrome.tabs.create({
-                    url, active: Boolean(activate),
+                    url: initialUrl, active: Boolean(activate),
                 });
                 const newTabId = created.id;
-                if (waitMode && waitMode !== "none") {
+                if (needWait) {
                     await ensureDebuggerAttached(newTabId);
                     const ev = PAGE_EVENT_FOR_WAIT[waitMode];
                     if (!ev) throw new Error(`invalid wait mode: ${waitMode}`);
-                    await waitForPageEvent(newTabId, ev, timeout_ms || 15000);
+                    // Kick off the real navigation; our listener is already armed.
+                    const waitPromise = waitForPageEvent(newTabId, ev, timeout_ms || 15000);
+                    await chrome.tabs.update(newTabId, { url });
+                    await waitPromise;
                 }
                 const finalTab = await chrome.tabs.get(newTabId);
                 socket.send(JSON.stringify({
@@ -263,14 +271,19 @@ function connect() {
         if (type === "NAVIGATE") {
             const { url, wait: waitMode, timeout_ms } = payload || {};
             try {
-                if (waitMode && waitMode !== "none") {
+                const needWait = waitMode && waitMode !== "none";
+                if (needWait) {
                     await ensureDebuggerAttached(tabId);
-                }
-                await chrome.tabs.update(tabId, { url });
-                if (waitMode && waitMode !== "none") {
                     const ev = PAGE_EVENT_FOR_WAIT[waitMode];
                     if (!ev) throw new Error(`invalid wait mode: ${waitMode}`);
-                    await waitForPageEvent(tabId, ev, timeout_ms || 15000);
+                    // Arm the listener BEFORE firing the navigation to avoid a race
+                    // where the page loads fast enough that Page.domContentLoaded
+                    // fires before our listener is registered.
+                    const waitPromise = waitForPageEvent(tabId, ev, timeout_ms || 15000);
+                    await chrome.tabs.update(tabId, { url });
+                    await waitPromise;
+                } else {
+                    await chrome.tabs.update(tabId, { url });
                 }
                 const finalTab = await chrome.tabs.get(tabId);
                 socket.send(JSON.stringify({

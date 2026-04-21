@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-04-21
+
+### Fixes
+
+- `navigate` and `open` with `--wait dom|full` no longer race the page-load event on fast pages. Previously `chrome.tabs.update`/`create` would fire the navigation before the debugger listener was armed, and on fast-loading pages (e.g. play2048.co) the `Page.domContentLoaded` event would already be past by the time we subscribed, producing a spurious `navigation timeout after 15000ms`. Now we attach the debugger and arm the listener BEFORE dispatching the real navigation — `open` additionally starts on `about:blank` so the initial tab-creation navigation doesn't consume our event. Surfaced by a real-world smoke test on play2048.co.
+
 ## [0.4.0] - 2026-04-21
 
 ### BREAKING CHANGES
