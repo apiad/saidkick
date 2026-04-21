@@ -460,6 +460,37 @@ async def post_open(req: OpenRequest):
     }
 
 
+@app.get("/find")
+async def get_find(
+    tab: str,
+    css: Optional[str] = None,
+    xpath: Optional[str] = None,
+    by_text: Optional[str] = None,
+    by_label: Optional[str] = None,
+    by_placeholder: Optional[str] = None,
+    within_css: Optional[str] = None,
+    nth: Optional[int] = None,
+    exact: bool = False,
+    regex: bool = False,
+    wait_ms: int = 0,
+):
+    browser_id, tab_id = _parse_or_400(tab)
+    loc = Locator(
+        css=css, xpath=xpath, by_text=by_text, by_label=by_label,
+        by_placeholder=by_placeholder, within_css=within_css,
+        nth=nth, exact=exact, regex=regex,
+    )
+    _validate_required_locator(loc)
+    response = await manager.send_command(
+        browser_id, "FIND",
+        payload={"tab_id": tab_id, "wait_ms": wait_ms, **_locator_payload(loc)},
+        timeout=_command_timeout(wait_ms=wait_ms),
+    )
+    if not response.get("success"):
+        _raise_for_extension_error(response.get("payload"))
+    return response.get("payload")
+
+
 @app.get("/tabs")
 async def get_tabs(active: bool = False):
     browser_ids = list(manager.connections.keys())
