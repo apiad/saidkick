@@ -3,6 +3,53 @@ let browserId = null;
 const SERVER_URL = "ws://localhost:6992/ws";
 const logQueue = [];
 
+async function ensureDebuggerAttached(tabId) {
+    const target = { tabId };
+    await new Promise((resolve, reject) => {
+        chrome.debugger.attach(target, "1.3", () => {
+            const err = chrome.runtime.lastError;
+            if (err && !err.message.includes("already attached")) {
+                reject(err);
+            } else {
+                resolve();
+            }
+        });
+    });
+    await new Promise(r =>
+        chrome.debugger.sendCommand(target, "Page.enable", {}, r)
+    );
+    await new Promise(r =>
+        chrome.debugger.sendCommand(target, "Runtime.enable", {}, r)
+    );
+}
+
+function waitForPageEvent(tabId, eventName, timeoutMs) {
+    return new Promise((resolve, reject) => {
+        let done = false;
+        const handler = (source, method) => {
+            if (done) return;
+            if (source.tabId !== tabId) return;
+            if (method !== eventName) return;
+            done = true;
+            clearTimeout(timer);
+            chrome.debugger.onEvent.removeListener(handler);
+            resolve();
+        };
+        const timer = setTimeout(() => {
+            if (done) return;
+            done = true;
+            chrome.debugger.onEvent.removeListener(handler);
+            reject(new Error(`navigation timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+        chrome.debugger.onEvent.addListener(handler);
+    });
+}
+
+const PAGE_EVENT_FOR_WAIT = {
+    dom: "Page.domContentLoaded",
+    full: "Page.loadEventFired",
+};
+
 // Tabs opened BEFORE the extension was installed/reloaded have no content
 // script yet. sendToContentScript attempts sendMessage; on the classic
 // "Receiving end does not exist" error it injects content.js (and main_world.js
@@ -115,12 +162,65 @@ function connect() {
             return;
         }
 
+        if (type === "OPEN") {
+            const { url, wait: waitMode, timeout_ms, activate } = payload || {};
+            try {
+                const created = await chrome.tabs.create({
+                    url, active: Boolean(activate),
+                });
+                const newTabId = created.id;
+                if (waitMode && waitMode !== "none") {
+                    await ensureDebuggerAttached(newTabId);
+                    const ev = PAGE_EVENT_FOR_WAIT[waitMode];
+                    if (!ev) throw new Error(`invalid wait mode: ${waitMode}`);
+                    await waitForPageEvent(newTabId, ev, timeout_ms || 15000);
+                }
+                const finalTab = await chrome.tabs.get(newTabId);
+                socket.send(JSON.stringify({
+                    type: "RESPONSE", id, success: true,
+                    payload: { tab_id: newTabId, url: finalTab.url },
+                }));
+            } catch (err) {
+                socket.send(JSON.stringify({
+                    type: "RESPONSE", id, success: false,
+                    payload: `tab create failed: ${err.message || err}`,
+                }));
+            }
+            return;
+        }
+
         // All remaining commands target a specific tab_id supplied in payload.
         const tabId = payload?.tab_id;
         if (typeof tabId !== "number") {
             socket.send(JSON.stringify({
                 type: "RESPONSE", id, success: false, payload: "tab_id required",
             }));
+            return;
+        }
+
+        if (type === "NAVIGATE") {
+            const { url, wait: waitMode, timeout_ms } = payload || {};
+            try {
+                if (waitMode && waitMode !== "none") {
+                    await ensureDebuggerAttached(tabId);
+                }
+                await chrome.tabs.update(tabId, { url });
+                if (waitMode && waitMode !== "none") {
+                    const ev = PAGE_EVENT_FOR_WAIT[waitMode];
+                    if (!ev) throw new Error(`invalid wait mode: ${waitMode}`);
+                    await waitForPageEvent(tabId, ev, timeout_ms || 15000);
+                }
+                const finalTab = await chrome.tabs.get(tabId);
+                socket.send(JSON.stringify({
+                    type: "RESPONSE", id, success: true,
+                    payload: { url: finalTab.url },
+                }));
+            } catch (err) {
+                socket.send(JSON.stringify({
+                    type: "RESPONSE", id, success: false,
+                    payload: err.message || String(err),
+                }));
+            }
             return;
         }
 
@@ -135,28 +235,12 @@ function connect() {
             return;
         }
 
-        const debugTarget = { tabId: tab.id };
-
-        if (["GET_DOM", "CLICK", "TYPE", "SELECT"].includes(type)) {
+        if (["GET_DOM", "CLICK", "TYPE", "SELECT", "GET_TEXT"].includes(type)) {
             sendToContentScript(tab.id, { type, payload }, id);
         } else if (type === "EXECUTE") {
             try {
-                await new Promise((resolve, reject) => {
-                    chrome.debugger.attach(debugTarget, "1.3", () => {
-                        if (chrome.runtime.lastError) {
-                            if (chrome.runtime.lastError.message.includes("already attached")) {
-                                resolve();
-                            } else {
-                                reject(chrome.runtime.lastError);
-                            }
-                        } else {
-                            resolve();
-                        }
-                    });
-                });
-                await new Promise(resolve =>
-                    chrome.debugger.sendCommand(debugTarget, "Runtime.enable", {}, resolve)
-                );
+                await ensureDebuggerAttached(tab.id);
+                const debugTarget = { tabId: tab.id };
                 chrome.debugger.sendCommand(
                     debugTarget, "Runtime.evaluate",
                     { expression: payload.code, returnByValue: true },
@@ -181,7 +265,8 @@ function connect() {
                 );
             } catch (error) {
                 socket.send(JSON.stringify({
-                    type: "RESPONSE", id, success: false, payload: error.toString(),
+                    type: "RESPONSE", id, success: false,
+                    payload: error.message || String(error),
                 }));
             }
         }
