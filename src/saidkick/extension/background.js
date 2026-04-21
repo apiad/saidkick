@@ -3,6 +3,63 @@ let browserId = null;
 const SERVER_URL = "ws://localhost:6992/ws";
 const logQueue = [];
 
+// Tabs opened BEFORE the extension was installed/reloaded have no content
+// script yet. sendToContentScript attempts sendMessage; on the classic
+// "Receiving end does not exist" error it injects content.js (and main_world.js
+// for console mirroring) via chrome.scripting, then retries once.
+function sendToContentScript(tabId, msg, requestId, retried = false) {
+    let settled = false;
+    const reply = (success, payload) => {
+        if (settled) return;
+        settled = true;
+        socket.send(JSON.stringify({
+            type: "RESPONSE", id: requestId, success, payload,
+        }));
+    };
+
+    try {
+        chrome.tabs.sendMessage(tabId, msg, (response) => {
+            const err = chrome.runtime.lastError;
+            if (err) {
+                const needsInject = !retried && /Receiving end does not exist|Could not establish connection/.test(err.message || "");
+                if (!needsInject) {
+                    reply(false, err.message);
+                    return;
+                }
+                // Inject content script + main_world and retry once.
+                chrome.scripting.executeScript(
+                    { target: { tabId }, files: ["content.js"] },
+                    () => {
+                        const injErr = chrome.runtime.lastError;
+                        if (injErr) {
+                            reply(false, `inject content.js failed: ${injErr.message}`);
+                            return;
+                        }
+                        chrome.scripting.executeScript(
+                            { target: { tabId }, files: ["main_world.js"], world: "MAIN" },
+                            () => {
+                                // main_world injection failure is non-fatal; log and keep going.
+                                if (chrome.runtime.lastError) {
+                                    console.warn("Saidkick: main_world inject:", chrome.runtime.lastError.message);
+                                }
+                                sendToContentScript(tabId, msg, requestId, true);
+                            }
+                        );
+                    }
+                );
+                return;
+            }
+            if (!response) {
+                reply(false, "content script returned no response");
+                return;
+            }
+            reply(response.success, response.payload);
+        });
+    } catch (err) {
+        reply(false, err.toString());
+    }
+}
+
 function connect() {
     socket = new WebSocket(SERVER_URL);
 
@@ -81,25 +138,7 @@ function connect() {
         const debugTarget = { tabId: tab.id };
 
         if (["GET_DOM", "CLICK", "TYPE", "SELECT"].includes(type)) {
-            try {
-                chrome.tabs.sendMessage(tab.id, { type, payload }, (response) => {
-                    if (chrome.runtime.lastError) {
-                        socket.send(JSON.stringify({
-                            type: "RESPONSE", id, success: false,
-                            payload: chrome.runtime.lastError.message,
-                        }));
-                    } else {
-                        socket.send(JSON.stringify({
-                            type: "RESPONSE", id,
-                            success: response.success, payload: response.payload,
-                        }));
-                    }
-                });
-            } catch (err) {
-                socket.send(JSON.stringify({
-                    type: "RESPONSE", id, success: false, payload: err.toString(),
-                }));
-            }
+            sendToContentScript(tab.id, { type, payload }, id);
         } else if (type === "EXECUTE") {
             try {
                 await new Promise((resolve, reject) => {
