@@ -161,3 +161,73 @@ def test_get_tabs_skips_browser_on_timeout():
     tabs = {entry["tab"]: entry for entry in r.json()}
     assert "br-bbbb:5" in tabs
     assert not any(t.startswith("br-aaaa:") for t in tabs)
+
+
+def test_execute_missing_tab_is_400():
+    r = TestClient(app).post("/execute", json={"code": "1+1"})
+    assert r.status_code == 422  # pydantic rejects missing required field
+
+
+def test_execute_malformed_tab_is_400():
+    r = TestClient(app).post(
+        "/execute", json={"tab": "not-a-tab", "code": "1+1"}
+    )
+    assert r.status_code == 400
+    assert "invalid tab ID" in r.json()["detail"]
+
+
+def test_execute_unknown_browser_is_404():
+    manager.connections.clear()
+    r = TestClient(app).post(
+        "/execute", json={"tab": "br-zzzz:1", "code": "1+1"}
+    )
+    assert r.status_code == 400  # malformed since 'z' is not hex
+
+
+def test_execute_unknown_valid_browser_is_404():
+    manager.connections.clear()
+    r = TestClient(app).post(
+        "/execute", json={"tab": "br-abcd:1", "code": "1+1"}
+    )
+    assert r.status_code == 404
+    assert "not connected" in r.json()["detail"]
+
+
+def test_execute_routes_to_correct_browser():
+    manager.connections.clear()
+    manager.connections["br-aaaa"] = object()  # type: ignore[assignment]
+
+    seen = {}
+    async def fake_send(browser_id, command_type, payload=None):
+        seen["browser_id"] = browser_id
+        seen["type"] = command_type
+        seen["payload"] = payload
+        return {"success": True, "payload": "ok"}
+
+    with patch.object(manager, "send_command", side_effect=fake_send):
+        r = TestClient(app).post(
+            "/execute", json={"tab": "br-aaaa:42", "code": "1+1"}
+        )
+    assert r.status_code == 200
+    assert seen["browser_id"] == "br-aaaa"
+    assert seen["type"] == "EXECUTE"
+    assert seen["payload"]["tab_id"] == 42
+    assert seen["payload"]["code"] == "1+1"
+
+
+def test_dom_routes_to_correct_browser():
+    manager.connections.clear()
+    manager.connections["br-aaaa"] = object()  # type: ignore[assignment]
+
+    seen = {}
+    async def fake_send(browser_id, command_type, payload=None):
+        seen["browser_id"] = browser_id
+        seen["payload"] = payload
+        return {"success": True, "payload": "<div/>"}
+
+    with patch.object(manager, "send_command", side_effect=fake_send):
+        r = TestClient(app).get("/dom?tab=br-aaaa:7&css=.foo")
+    assert r.status_code == 200
+    assert seen["browser_id"] == "br-aaaa"
+    assert seen["payload"]["tab_id"] == 7
+    assert seen["payload"]["css"] == ".foo"

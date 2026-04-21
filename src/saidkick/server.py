@@ -28,9 +28,11 @@ def parse_tab_id(composite: str) -> Tuple[str, int]:
     return browser_id, int(tab_str)
 
 class ExecuteRequest(BaseModel):
+    tab: str
     code: str
 
 class SelectorRequest(BaseModel):
+    tab: str
     css: Optional[str] = None
     xpath: Optional[str] = None
 
@@ -40,6 +42,13 @@ class TypeRequest(SelectorRequest):
 
 class SelectRequest(SelectorRequest):
     value: str
+
+
+def _parse_or_400(tab: str) -> Tuple[str, int]:
+    try:
+        return parse_tab_id(tab)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 class SaidkickManager:
     def __init__(self, max_logs: int = 100):
@@ -153,36 +162,74 @@ async def get_console(limit: int = 100, grep: Optional[str] = None):
     return manager.get_logs(limit, grep)
 
 @app.get("/dom")
-async def get_dom(css: Optional[str] = None, xpath: Optional[str] = None, all: bool = False):
-    response = await manager.send_command("GET_DOM", payload={"css": css, "xpath": xpath, "all": all})
+async def get_dom(
+    tab: str,
+    css: Optional[str] = None,
+    xpath: Optional[str] = None,
+    all: bool = False,
+):
+    browser_id, tab_id = _parse_or_400(tab)
+    response = await manager.send_command(
+        browser_id, "GET_DOM",
+        payload={"tab_id": tab_id, "css": css, "xpath": xpath, "all": all},
+    )
     return response.get("payload")
+
 
 @app.post("/execute")
 async def post_execute(req: ExecuteRequest):
-    response = await manager.send_command("EXECUTE", req.code)
+    browser_id, tab_id = _parse_or_400(req.tab)
+    response = await manager.send_command(
+        browser_id, "EXECUTE",
+        payload={"tab_id": tab_id, "code": req.code},
+    )
     if not response.get("success"):
-        error_msg = response.get("payload")
-        logger.error(f"[error] Execution failed: {error_msg}")
-        raise HTTPException(status_code=500, detail=error_msg)
+        raise HTTPException(status_code=500, detail=response.get("payload"))
     return response.get("payload")
+
 
 @app.post("/click")
 async def post_click(req: SelectorRequest):
-    response = await manager.send_command("CLICK", req.model_dump())
+    browser_id, tab_id = _parse_or_400(req.tab)
+    response = await manager.send_command(
+        browser_id, "CLICK",
+        payload={"tab_id": tab_id, "css": req.css, "xpath": req.xpath},
+    )
     if not response.get("success"):
         raise HTTPException(status_code=500, detail=response.get("payload"))
     return response.get("payload")
+
 
 @app.post("/type")
 async def post_type(req: TypeRequest):
-    response = await manager.send_command("TYPE", req.model_dump())
+    browser_id, tab_id = _parse_or_400(req.tab)
+    response = await manager.send_command(
+        browser_id, "TYPE",
+        payload={
+            "tab_id": tab_id,
+            "css": req.css,
+            "xpath": req.xpath,
+            "text": req.text,
+            "clear": req.clear,
+        },
+    )
     if not response.get("success"):
         raise HTTPException(status_code=500, detail=response.get("payload"))
     return response.get("payload")
 
+
 @app.post("/select")
 async def post_select(req: SelectRequest):
-    response = await manager.send_command("SELECT", req.model_dump())
+    browser_id, tab_id = _parse_or_400(req.tab)
+    response = await manager.send_command(
+        browser_id, "SELECT",
+        payload={
+            "tab_id": tab_id,
+            "css": req.css,
+            "xpath": req.xpath,
+            "value": req.value,
+        },
+    )
     if not response.get("success"):
         raise HTTPException(status_code=500, detail=response.get("payload"))
     return response.get("payload")
