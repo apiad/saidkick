@@ -5,7 +5,7 @@ import re
 import secrets
 import uuid
 from collections import deque
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -93,6 +93,21 @@ class TypeRequest(SelectorRequest):
 
 class SelectRequest(SelectorRequest):
     value: str
+
+WaitMode = Literal["dom", "full", "none"]
+
+class NavigateRequest(BaseModel):
+    tab: str
+    url: str
+    wait: WaitMode = "dom"
+    timeout_ms: int = 15000
+
+class OpenRequest(BaseModel):
+    browser: str
+    url: str
+    wait: WaitMode = "dom"
+    timeout_ms: int = 15000
+    activate: bool = False
 
 
 def _parse_or_400(tab: str) -> Tuple[str, int]:
@@ -320,6 +335,45 @@ async def post_select(req: SelectRequest):
     if not response.get("success"):
         _raise_for_extension_error(response.get("payload"))
     return response.get("payload")
+
+
+@app.post("/navigate")
+async def post_navigate(req: NavigateRequest):
+    browser_id, tab_id = _parse_or_400(req.tab)
+    _validate_http_url(req.url)
+    response = await manager.send_command(
+        browser_id, "NAVIGATE",
+        payload={
+            "tab_id": tab_id, "url": req.url,
+            "wait": req.wait, "timeout_ms": req.timeout_ms,
+        },
+        timeout=_command_timeout(timeout_ms=req.timeout_ms),
+    )
+    if not response.get("success"):
+        _raise_for_extension_error(response.get("payload"))
+    return response.get("payload")
+
+
+@app.post("/open")
+async def post_open(req: OpenRequest):
+    _validate_browser_id(req.browser)
+    _validate_http_url(req.url)
+    response = await manager.send_command(
+        req.browser, "OPEN",
+        payload={
+            "url": req.url, "wait": req.wait,
+            "timeout_ms": req.timeout_ms, "activate": req.activate,
+        },
+        timeout=_command_timeout(timeout_ms=req.timeout_ms),
+    )
+    if not response.get("success"):
+        _raise_for_extension_error(response.get("payload"))
+    ext_payload = response.get("payload") or {}
+    ext_tab_id = ext_payload.get("tab_id")
+    return {
+        "tab": f"{req.browser}:{ext_tab_id}",
+        "url": ext_payload.get("url"),
+    }
 
 
 @app.get("/tabs")
