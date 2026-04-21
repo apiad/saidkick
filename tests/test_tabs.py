@@ -74,3 +74,90 @@ def test_ws_disconnect_removes_connection():
         assert bid in manager.connections
     import time; time.sleep(0.1)
     assert bid not in manager.connections
+
+
+from unittest.mock import AsyncMock, patch
+
+
+def test_get_tabs_empty_when_no_browsers():
+    manager.connections.clear()
+    c = TestClient(app)
+    r = c.get("/tabs")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_get_tabs_aggregates_across_browsers():
+    manager.connections.clear()
+    manager.connections["br-aaaa"] = object()  # type: ignore[assignment]
+    manager.connections["br-bbbb"] = object()  # type: ignore[assignment]
+
+    async def fake_send(browser_id, command_type, payload=None):
+        assert command_type == "LIST_TABS"
+        return {
+            "success": True,
+            "payload": [
+                {"id": 1, "url": "https://a.com/", "title": "A",
+                 "active": True, "windowId": 10},
+                {"id": 2, "url": "https://b.com/", "title": "B",
+                 "active": False, "windowId": 10},
+            ],
+        } if browser_id == "br-aaaa" else {
+            "success": True,
+            "payload": [
+                {"id": 5, "url": "https://c.com/", "title": "C",
+                 "active": True, "windowId": 20},
+            ],
+        }
+
+    with patch.object(manager, "send_command", side_effect=fake_send):
+        r = TestClient(app).get("/tabs")
+    assert r.status_code == 200
+    data = r.json()
+    tabs = {entry["tab"]: entry for entry in data}
+    assert "br-aaaa:1" in tabs
+    assert "br-aaaa:2" in tabs
+    assert "br-bbbb:5" in tabs
+    assert tabs["br-aaaa:1"]["browser_id"] == "br-aaaa"
+    assert tabs["br-aaaa:1"]["tab_id"] == 1
+    assert tabs["br-aaaa:1"]["url"] == "https://a.com/"
+    assert tabs["br-aaaa:1"]["active"] is True
+
+
+def test_get_tabs_active_filter():
+    manager.connections.clear()
+    manager.connections["br-aaaa"] = object()  # type: ignore[assignment]
+
+    async def fake_send(browser_id, command_type, payload=None):
+        return {"success": True, "payload": [
+            {"id": 1, "url": "a", "title": "A", "active": True,  "windowId": 10},
+            {"id": 2, "url": "b", "title": "B", "active": False, "windowId": 10},
+        ]}
+
+    with patch.object(manager, "send_command", side_effect=fake_send):
+        r = TestClient(app).get("/tabs?active=true")
+    assert r.status_code == 200
+    tabs = r.json()
+    assert len(tabs) == 1
+    assert tabs[0]["tab"] == "br-aaaa:1"
+
+
+def test_get_tabs_skips_browser_on_timeout():
+    from fastapi import HTTPException
+    manager.connections.clear()
+    manager.connections["br-aaaa"] = object()  # type: ignore[assignment]
+    manager.connections["br-bbbb"] = object()  # type: ignore[assignment]
+
+    async def fake_send(browser_id, command_type, payload=None):
+        if browser_id == "br-aaaa":
+            raise HTTPException(status_code=504, detail="Browser response timeout")
+        return {"success": True, "payload": [
+            {"id": 5, "url": "c", "title": "C", "active": True, "windowId": 20},
+        ]}
+
+    with patch.object(manager, "send_command", side_effect=fake_send):
+        r = TestClient(app).get("/tabs")
+    assert r.status_code == 200
+    tabs = {entry["tab"]: entry for entry in r.json()}
+    assert "br-bbbb:5" in tabs
+    assert not any(t.startswith("br-aaaa:") for t in tabs)

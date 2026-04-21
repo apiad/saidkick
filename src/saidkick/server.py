@@ -85,31 +85,38 @@ class SaidkickManager:
             if not future.done():
                 future.set_result(message)
 
-    async def send_command(self, command_type: str, payload: Any = None) -> Dict[str, Any]:
-        if not self.active_connections:
-            logger.warning(f"[warn] Failed to send {command_type}: No active browser connection")
-            raise HTTPException(status_code=400, detail="No active browser connection")
+    async def send_command(
+        self, browser_id: str, command_type: str, payload: Any = None
+    ) -> Dict[str, Any]:
+        ws = self.connections.get(browser_id)
+        if ws is None:
+            raise HTTPException(
+                status_code=404, detail=f"browser not connected: {browser_id}"
+            )
 
         request_id = str(uuid.uuid4())
         future = asyncio.get_event_loop().create_future()
         self.pending_requests[request_id] = future
 
-        # Use the most recent connection
-        websocket = self.active_connections[-1]
-        logger.info(f"[CMD] Sending {command_type} to browser")
-        await websocket.send_text(
-            json.dumps({"type": command_type, "id": request_id, "payload": payload})
-        )
+        logger.info(f"[CMD] {browser_id} <- {command_type}")
+        try:
+            await ws.send_text(
+                json.dumps({"type": command_type, "id": request_id, "payload": payload})
+            )
+        except Exception as e:
+            self.pending_requests.pop(request_id, None)
+            raise HTTPException(
+                status_code=503, detail=f"browser send failed: {e}"
+            ) from e
 
         try:
-            # Wait for response with timeout
             response = await asyncio.wait_for(future, timeout=10.0)
-            logger.info(f"[CMD] Received response for {command_type}")
             return response
         except asyncio.TimeoutError as e:
-            logger.error(f"[error] Timeout waiting for {command_type}")
             self.pending_requests.pop(request_id, None)
-            raise HTTPException(status_code=504, detail="Browser response timeout") from e
+            raise HTTPException(
+                status_code=504, detail="Browser response timeout"
+            ) from e
 
     def get_logs(self, limit: int = 100, grep: Optional[str] = None) -> List[Dict[str, Any]]:
         all_logs = list(self.logs)
@@ -179,3 +186,36 @@ async def post_select(req: SelectRequest):
     if not response.get("success"):
         raise HTTPException(status_code=500, detail=response.get("payload"))
     return response.get("payload")
+
+
+@app.get("/tabs")
+async def get_tabs(active: bool = False):
+    browser_ids = list(manager.connections.keys())
+
+    async def _fetch(bid: str):
+        try:
+            resp = await manager.send_command(bid, "LIST_TABS")
+        except HTTPException:
+            return bid, None
+        if not resp.get("success"):
+            return bid, None
+        return bid, resp.get("payload") or []
+
+    results = await asyncio.gather(*(_fetch(bid) for bid in browser_ids))
+    tabs: List[Dict[str, Any]] = []
+    for bid, raw_tabs in results:
+        if raw_tabs is None:
+            continue
+        for t in raw_tabs:
+            if active and not t.get("active"):
+                continue
+            tabs.append({
+                "tab": f"{bid}:{t['id']}",
+                "browser_id": bid,
+                "tab_id": t["id"],
+                "url": t.get("url"),
+                "title": t.get("title"),
+                "active": bool(t.get("active")),
+                "windowId": t.get("windowId"),
+            })
+    return tabs
