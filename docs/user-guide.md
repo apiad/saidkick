@@ -54,8 +54,8 @@ Exactly one of `--css` / `--xpath` / `--by-text` / `--by-label` / `--by-placehol
 
 ```bash
 TAB=br-XXXX:N
-saidkick click  --tab "$TAB" --by-text "Leydis CIMEX"
-saidkick type   "Hola Leydis" --tab "$TAB" --by-label "Type a message"
+saidkick click  --tab "$TAB" --by-text "Alice Chen"
+saidkick type   "Hello Alice" --tab "$TAB" --by-label "Type a message"
 saidkick press  Enter --tab "$TAB"
 saidkick screenshot --tab "$TAB" --output /tmp/confirm.png
 ```

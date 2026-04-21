@@ -544,18 +544,18 @@ def test_find_by_text_routes_to_extension():
             "success": True,
             "payload": [
                 {"selector": "div:nth-of-type(3)", "tag": "DIV",
-                 "role": "listitem", "name": "Leydis CIMEX",
-                 "text": "Leydis CIMEX", "rect": {"x": 0, "y": 0, "w": 100, "h": 40},
+                 "role": "listitem", "name": "Alice Chen",
+                 "text": "Alice Chen", "rect": {"x": 0, "y": 0, "w": 100, "h": 40},
                  "visible": True},
             ],
         }
     with patch.object(manager, "send_command", side_effect=fake_send):
-        r = TestClient(app).get("/find?tab=br-aaaa:1&by_text=Leydis")
+        r = TestClient(app).get("/find?tab=br-aaaa:1&by_text=Alice")
     assert r.status_code == 200
     assert len(r.json()) == 1
-    assert r.json()[0]["name"] == "Leydis CIMEX"
+    assert r.json()[0]["name"] == "Alice Chen"
     assert seen["args"][1] == "FIND"
-    assert seen["payload"]["by_text"] == "Leydis"
+    assert seen["payload"]["by_text"] == "Alice"
 
 
 def test_find_no_locator_is_400():
@@ -2116,8 +2116,8 @@ Exactly one of `--css` / `--xpath` / `--by-text` / `--by-label` / `--by-placehol
 
 ```bash
 TAB=br-XXXX:N
-saidkick click  --tab "$TAB" --by-text "Leydis CIMEX"
-saidkick type   "Hola Leydis" --tab "$TAB" --by-label "Type a message"
+saidkick click  --tab "$TAB" --by-text "Alice Chen"
+saidkick type   "Hello Alice" --tab "$TAB" --by-label "Type a message"
 saidkick press  Enter --tab "$TAB"
 saidkick screenshot --tab "$TAB" --output /tmp/confirm.png
 ```
@@ -2242,13 +2242,13 @@ Expected: `PNG image data, ..., 8-bit/color RGBA, non-interlaced`.
 
 ```bash
 TAB=br-XXXX:N  # a WhatsApp tab
-uv run saidkick click --tab "$TAB" --by-text "Leydis CIMEX"
+uv run saidkick click --tab "$TAB" --by-text "Alice Chen"
 uv run saidkick type "test from 0.4.0" --tab "$TAB" --by-label "Type a message"
 uv run saidkick press Enter --tab "$TAB"
 uv run saidkick screenshot --tab "$TAB" --output /tmp/sent.png
 ```
 
-Expected: message lands in Leydis's chat; screenshot captures the new bubble. Zero `exec` calls needed.
+Expected: message lands in Alice's chat; screenshot captures the new bubble. Zero `exec` calls needed.
 
 - [ ] **Step 7: `exec` IIFE smoke**
 

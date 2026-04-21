@@ -8,7 +8,7 @@
 
 Driving a real app (WhatsApp Web) end-to-end exposed the gaps 0.3.0 doesn't cover:
 
-- Finding a chat by name required `span[title*="Leydis"]` + an ancestor walk. The agent's intent is "the row named Leydis," not a CSS query.
+- Finding a chat by name required `span[title*="Alice"]` + an ancestor walk. The agent's intent is "the row named Alice," not a CSS query.
 - Sending the message required hand-built `KeyboardEvent` dispatch to press Enter.
 - Typing into WhatsApp's Lexical-based contenteditable ignored naive `value = ...` / `innerText = ...`; had to fall back to `document.execCommand("insertText", ...)`.
 - Verifying the send landed needed another `exec` DOM read. A PNG would have answered instantly and also fed a vision model.
@@ -44,7 +44,7 @@ Ambiguity behavior: when the resolved locator matches ≥2 elements and `nth` is
 
 ### 2. `find` as a standalone command — debugging/inspection
 
-`GET /find?tab=br-XXXX:N&by_text=Leydis&...` returns up to 50 matches as JSON:
+`GET /find?tab=br-XXXX:N&by_text=Alice&...` returns up to 50 matches as JSON:
 
 ```json
 [
@@ -52,15 +52,15 @@ Ambiguity behavior: when the resolved locator matches ≥2 elements and `nth` is
     "selector": "#chat-list > div:nth-child(4) div[role=\"listitem\"]",
     "tag": "DIV",
     "role": "listitem",
-    "name": "Leydis CIMEX",
-    "text": "Leydis CIMEX Ohh perfecto 10:21 am",
+    "name": "Alice Chen",
+    "text": "Alice Chen Sounds good 10:21 am",
     "rect": {"x": 0, "y": 180, "w": 420, "h": 72},
     "visible": true
   }
 ]
 ```
 
-CLI: `saidkick find --tab TAB --by-text "Leydis" [--role listitem] [--within-css ...]`.
+CLI: `saidkick find --tab TAB --by-text "Alice" [--role listitem] [--within-css ...]`.
 
 The `selector` field is a unique CSS path back to that element, useful as a stable handle for follow-up commands in scripts. `visible` is `el.offsetParent !== null && rect has nonzero area` — cheap filter to exclude hidden matches. `role` is read from the element's IDL `role` attribute (where supported) or inferred from tag; it's informational output only — `by_role` matching is deferred to the 0.5.0 accessibility chunk.
 
@@ -234,8 +234,8 @@ Only one: `exec` requires an explicit `return` for the value to propagate. CHANG
 1. Full pytest suite green.
 2. The WhatsApp-send flow reproducible without any `exec` calls:
    ```
-   saidkick click  --tab $TAB --by-text "Leydis CIMEX"
-   saidkick type   "Hola Leydis" --tab $TAB --by-label "Type a message"
+   saidkick click  --tab $TAB --by-text "Alice Chen"
+   saidkick type   "Hello Alice" --tab $TAB --by-label "Type a message"
    saidkick press  Enter --tab $TAB
    saidkick screenshot --tab $TAB --output /tmp/shot.png
    ```
