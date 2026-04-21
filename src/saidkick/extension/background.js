@@ -197,15 +197,44 @@ function connect() {
     };
 }
 
-// Receive logs from content script
+function getStatus() {
+    const state = socket ? socket.readyState : WebSocket.CLOSED;
+    return {
+        connected: state === WebSocket.OPEN,
+        connecting: state === WebSocket.CONNECTING,
+        browserId: browserId,
+        serverUrl: SERVER_URL,
+    };
+}
+
+function forceReconnect() {
+    browserId = null;
+    if (socket) {
+        try {
+            socket.close();
+        } catch (_) { /* ignore */ }
+    }
+    // socket.onclose will auto-retry in 5s; trigger immediately instead.
+    setTimeout(connect, 50);
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log("Saidkick: Received message from content script:", message.type);
     if (message.type === "log") {
         if (socket && socket.readyState === WebSocket.OPEN) {
             socket.send(JSON.stringify(message));
         } else {
             logQueue.push(message);
         }
+        return;
+    }
+    if (message.type === "GET_STATUS") {
+        sendResponse(getStatus());
+        return;
+    }
+    if (message.type === "RECONNECT") {
+        forceReconnect();
+        sendResponse({ ok: true });
+        return;
     }
 });
 
