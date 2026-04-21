@@ -88,6 +88,29 @@ The content script's `waitForSelector(css, xpath, waitMs)` polls `document.query
 
 The server's `_raise_for_extension_error` helper pattern-matches on the extension's failure strings to assign the right 4xx/5xx. Extension-side strings are owned by this repo, so the matching is deterministic.
 
+### Semantic locators
+
+`Locator` is a Pydantic mixin with fields `css`, `xpath`, `by_text`, `by_label`, `by_placeholder`, `within_css`, `nth`, `exact`, `regex`. `_validate_locator` enforces the regex/exact mutex and the at-most-one rule; `_validate_required_locator` adds the exactly-one-of rule for endpoints that require a locator (`find`, `click`, `type`, `select`, `dom`). `text`, `press`, and `screenshot` treat the locator as optional.
+
+Content-script resolution follows one path in `collectLocator`:
+1. Scope root = `within_css ? document.querySelector(within_css) : document`.
+2. If `css`: `root.querySelectorAll(css)`.
+3. Else if `xpath`: `document.evaluate(xpath, root, ...)`.
+4. Else: scan `root.querySelectorAll("*")` with the text/label/placeholder predicate (substring-ci by default; `exact` or `regex` adjust).
+5. `nth` picks one; absence + multi-match raises `Ambiguous locator`.
+
+### Keyboard events
+
+`PRESS` attaches the debugger (shared with `EXECUTE`), optionally asks the content script to `FOCUS` a locator target, then issues `Input.dispatchKeyEvent` (keyDown → optional char → keyUp) with a modifier bitmask. Framework listeners see real native-origin events.
+
+### Screenshots
+
+`SCREENSHOT` attaches the debugger, optionally asks the content script to `RESOLVE_RECT` on a locator to get a clip rectangle, then calls `Page.captureScreenshot` with `{format: "png", clip?, captureBeyondViewport: full_page}`. Base64-encoded PNG returned to the server.
+
+### Exec scope isolation
+
+`EXECUTE` wraps the user's `payload.code` in `(async () => { ... })()` before passing to `Runtime.evaluate` with `awaitPromise: true`. Each invocation gets a fresh async-function scope; `const`/`let` declarations no longer collide across calls. Top-level `await` works. Callers must `return` explicitly.
+
 ## Technology Stack
 
 - **Backend**: Python 3.12+, FastAPI, Uvicorn, Pydantic.

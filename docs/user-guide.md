@@ -38,6 +38,28 @@ saidkick text --tab "$TAB" --css "main" --wait-ms 5000
 
 `--wait-ms` polls the selector until it resolves (or the timeout expires), which is what you want on any SPA or lazy-rendered page.
 
+## Finding elements by intent
+
+Real apps ship class-obfuscated DOMs. The semantic locators let you target by what the user sees rather than what the framework compiled:
+
+- `--by-text "Send"` — substring (case-insensitive) match on the element's text.
+- `--by-label "Type a message"` — matches `aria-label`, `aria-labelledby` target, or `<label for>`.
+- `--by-placeholder "Search..."` — matches the HTML `placeholder` attribute.
+
+Scope a search with `--within-css ".modal"`; disambiguate a multi-match with `--nth 2`; tighten a match with `--exact` or `--regex`.
+
+Exactly one of `--css` / `--xpath` / `--by-text` / `--by-label` / `--by-placeholder` must be set on any selector-using command.
+
+### Example: driving a chat without exec
+
+```bash
+TAB=br-XXXX:N
+saidkick click  --tab "$TAB" --by-text "Leydis CIMEX"
+saidkick type   "Hola Leydis" --tab "$TAB" --by-label "Type a message"
+saidkick press  Enter --tab "$TAB"
+saidkick screenshot --tab "$TAB" --output /tmp/confirm.png
+```
+
 ## 1. CLI Reference
 
 The Saidkick CLI (`saidkick`) is the primary way to interact with the browser from your terminal.
@@ -111,6 +133,25 @@ Open a URL in a new tab. Stdout is the new composite `br-XXXX:N` for piping.
 - `--timeout-ms`: Default 15000.
 - `--activate`: Focus the new tab. Default is background.
 
+### `saidkick find`
+Debug aid: return JSON list of matches for a locator.
+- `--tab` (required); exactly one locator (`--by-text` / `--css` / etc.); optional `--within-css`, `--nth`, `--exact`, `--regex`, `--wait-ms`.
+
+### `saidkick press`
+Dispatch a keyboard event via CDP.
+- `KEY` (argument): `Enter`, `Escape`, `Tab`, `ArrowDown`, single char (`a`), etc.
+- `--tab` (required).
+- `--mod ctrl,shift` (or repeated): modifiers.
+- Optional locator flags: focuses the matched element before dispatching.
+- `--wait-ms`: poll for the focus target.
+
+### `saidkick screenshot`
+Capture a PNG.
+- `--tab` (required).
+- Optional locator flags: clip to the matched element's bounding rect.
+- `--full-page`: capture beyond the viewport.
+- `--output PATH`: write to a file (overwrites silently); default is raw bytes to stdout.
+
 ### `saidkick exec`
 Execute arbitrary JavaScript and return the result as JSON.
 - `code`: (Optional argument) The JS code to run. If not provided, reads from stdin.
@@ -154,6 +195,9 @@ The server exposes the following endpoints (default base URL: `http://localhost:
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
+| `/find` | `GET` | Locator matches as JSON (debug). Query: `tab`, locator fields, `wait_ms`. |
+| `/press` | `POST` | Keyboard event. Body: `{"tab": ..., "key": ..., "modifiers": [...], locator fields, "wait_ms": N}`. |
+| `/screenshot` | `GET` | PNG capture. Query: `tab`, locator fields, `full_page`. Returns `{"png_base64": "...", "width": N, "height": N}`. |
 | `/tabs` | `GET` | List tabs across connected browsers. Query: `active`. |
 | `/console` | `GET` | Get log history. Query: `limit`, `grep`, `browser`. |
 | `/dom` | `GET` | Get page HTML. Query: `tab` (required), `css`, `xpath`, `all`, `wait_ms`. |

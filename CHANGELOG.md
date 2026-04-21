@@ -4,6 +4,26 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-21
+
+### BREAKING CHANGES
+
+- `exec` now wraps user code in `(async () => { ... })()` so scope doesn't leak between calls. **Callers must `return` their result**; a bare expression like `document.title` no longer becomes the response payload — use `return document.title`. Fixes the silent scope-collision footgun where `const x = 1` in one call caused the next to throw on redeclaration.
+
+### Features
+
+- Semantic locators — `--by-text`, `--by-label`, `--by-placeholder` on every selector-using command (`dom`, `text`, `click`, `type`, `select`, plus the new `find`, `press`, `screenshot`). `--within-css` scopes the search; `--nth N` disambiguates multi-matches; `--exact` and `--regex` adjust match semantics. Ambiguity without `--nth` returns 400.
+- `GET /find` + `saidkick find --tab X --by-text ...` — debug tool that returns up to 50 matches as JSON with `selector`, `tag`, `role`, `name`, `text`, `rect`, `visible`.
+- `POST /press` + `saidkick press KEY --tab X [--mod ctrl,shift] [--by-* ...]` — dispatches keyboard events via CDP `Input.dispatchKeyEvent`. Optional locator focuses the target first.
+- `GET /screenshot` + `saidkick screenshot --tab X [--output PATH]` — captures a PNG via CDP `Page.captureScreenshot`. Optional locator clips to an element's bounding rect; `--full-page` captures beyond the viewport.
+- `type` on `contenteditable` elements now uses `document.execCommand("insertText", ...)` — fixes WhatsApp, Slack, Discord, Gmail compose, GitHub comments, Notion, and every other Lexical / ProseMirror / Quill / Slate / Draft-backed rich-text field.
+
+### Internal
+
+- New `Locator` Pydantic mixin and `_validate_locator` / `_validate_required_locator` helpers. Every selector-using endpoint now validates "exactly one locator is set" at the boundary with a 400 on zero or multiple.
+- Content-script `collectMatches` → `collectLocator`; single resolver backs CSS, XPath, text, label, and placeholder locators.
+- `FOCUS` and `RESOLVE_RECT` content-script helpers so background-side `PRESS` / `SCREENSHOT` can target specific elements.
+
 ## [0.3.0] - 2026-04-21
 
 ### Features
