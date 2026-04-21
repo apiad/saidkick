@@ -4,6 +4,19 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-21
+
+### Features
+
+- `POST /navigate` and `saidkick navigate --tab ID URL [--wait dom|full|none] [--timeout-ms N]` — send a tab to a URL. Returns the final URL after redirects.
+- `POST /open` and `saidkick open --browser BR URL [--wait ...] [--timeout-ms N] [--activate]` — open a URL in a new tab; stdout is the composite `br-XXXX:N`, pipe-ready.
+- `GET /text` and `saidkick text --tab ID [--css SCOPE] [--wait-ms N]` — return `innerText` of the page or a CSS-scoped element.
+- `--wait-ms N` on `dom`, `click`, `type`, `select`, `text`: content-script polls the selector (every 100ms up to `N`ms) before acting. Default 0 preserves prior behavior.
+
+### Fixes
+
+- HTTP status codes are correct now. 0.2.0 returned `500` for caller-observable failures (`Element not found`, `Ambiguous selector`, `Option not found`, `Element is not a <select>`). These now return `404` (not found) and `400` (malformed / ambiguous) respectively. Upstream browser errors that we can't classify return `502`; timeouts return `504`. `500` is reserved for server bugs.
+
 ## [0.2.0] - 2026-04-21
 
 ### BREAKING CHANGES

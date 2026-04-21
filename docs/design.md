@@ -63,6 +63,31 @@ The `SaidkickManager` holds connections in `Dict[str, WebSocket]` keyed by `brow
 
 Log entries received from any browser are stamped with `browser_id` on arrival; `/console?browser=` filters the ring buffer accordingly.
 
+### Navigation waits
+
+`NAVIGATE` and `OPEN` use the `chrome.debugger` Page domain for precise load-state semantics:
+
+- `wait = "dom"` resolves on the first `Page.domContentLoaded` after the navigation.
+- `wait = "full"` resolves on the first `Page.loadEventFired`.
+- `wait = "none"` returns as soon as `chrome.tabs.update` / `chrome.tabs.create` resolves.
+
+The debugger is attached lazily (shared helper with `EXECUTE`) and stays attached after the wait resolves. A `timeout_ms` bound caps the wait; on exceeding it the extension replies with `navigation timeout after {N}ms`, which the server maps to HTTP 504.
+
+### Wait-for-element
+
+The content script's `waitForSelector(css, xpath, waitMs)` polls `document.querySelectorAll` (or `document.evaluate` for XPath) every 100ms until exactly one match is found, or `waitMs` elapses. Ambiguous matches (≥2) during polling do *not* throw immediately — the DOM may still be settling; the helper only throws `Ambiguous selector` once the deadline expires. Zero-match with an expired deadline throws `element not found`, which the server maps to HTTP 404. The server's per-command `asyncio.wait_for` budget is scaled by `_command_timeout(wait_ms, timeout_ms)` so long polls don't trip the 10s default.
+
+### Error policy
+
+- `400` = malformed input (bad IDs, invalid URLs, wrong element type, ambiguous selector).
+- `404` = resource not found (browser, tab, element, option).
+- `422` = Pydantic validation.
+- `502` = unrecognized upstream (browser) error.
+- `504` = timeout.
+- `500` = actual server bug. Reserved.
+
+The server's `_raise_for_extension_error` helper pattern-matches on the extension's failure strings to assign the right 4xx/5xx. Extension-side strings are owned by this repo, so the matching is deterministic.
+
 ## Technology Stack
 
 - **Backend**: Python 3.12+, FastAPI, Uvicorn, Pydantic.
