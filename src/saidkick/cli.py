@@ -104,10 +104,29 @@ def dom(
     css: str = typer.Option(None, help="CSS selector"),
     xpath: str = typer.Option(None, help="XPath selector"),
     all_matches: bool = typer.Option(False, "--all", help="Return all matches"),
+    wait_ms: int = typer.Option(0, "--wait-ms", help="Poll up to N ms for the selector to resolve"),
 ):
     """Get the current page DOM of the targeted tab."""
     try:
-        result = client.get_dom(tab=tab, css=css, xpath=xpath, all_matches=all_matches)
+        result = client.get_dom(
+            tab=tab, css=css, xpath=xpath,
+            all_matches=all_matches, wait_ms=wait_ms,
+        )
+        sys.stdout.write(str(result))
+        sys.stdout.write("\n")
+    except Exception as e:
+        handle_client_error(e)
+
+
+@app.command()
+def text(
+    tab: str = typer.Option(..., "--tab", help="Target tab (br-XXXX:N)"),
+    css: str = typer.Option(None, "--css", help="Optional CSS scope (innerText of matched element)"),
+    wait_ms: int = typer.Option(0, "--wait-ms", help="Poll up to N ms for the selector"),
+):
+    """Print the readable (innerText) content of a tab or a CSS-scoped element."""
+    try:
+        result = client.text(tab=tab, css=css, wait_ms=wait_ms)
         sys.stdout.write(str(result))
         sys.stdout.write("\n")
     except Exception as e:
@@ -119,10 +138,11 @@ def click(
     tab: str = typer.Option(..., "--tab", help="Target tab (br-XXXX:N)"),
     css: str = typer.Option(None, help="CSS selector"),
     xpath: str = typer.Option(None, help="XPath selector"),
+    wait_ms: int = typer.Option(0, "--wait-ms", help="Poll up to N ms for the selector"),
 ):
     """Click an element in the targeted tab."""
     try:
-        result = client.click(tab=tab, css=css, xpath=xpath)
+        result = client.click(tab=tab, css=css, xpath=xpath, wait_ms=wait_ms)
         console.print(f"[success]{result}[/success]")
     except Exception as e:
         handle_client_error(e)
@@ -135,10 +155,14 @@ def type(
     css: str = typer.Option(None, help="CSS selector"),
     xpath: str = typer.Option(None, help="XPath selector"),
     clear: bool = typer.Option(False, "--clear", help="Clear field before typing"),
+    wait_ms: int = typer.Option(0, "--wait-ms", help="Poll up to N ms for the selector"),
 ):
     """Type text into an element in the targeted tab."""
     try:
-        result = client.type(tab=tab, text=text, css=css, xpath=xpath, clear=clear)
+        result = client.type(
+            tab=tab, text=text, css=css, xpath=xpath,
+            clear=clear, wait_ms=wait_ms,
+        )
         console.print(f"[success]{result}[/success]")
     except Exception as e:
         handle_client_error(e)
@@ -150,11 +174,50 @@ def select(
     tab: str = typer.Option(..., "--tab", help="Target tab (br-XXXX:N)"),
     css: str = typer.Option(None, help="CSS selector"),
     xpath: str = typer.Option(None, help="XPath selector"),
+    wait_ms: int = typer.Option(0, "--wait-ms", help="Poll up to N ms for the selector"),
 ):
     """Select an option in a <select> element in the targeted tab."""
     try:
-        result = client.select(tab=tab, value=value, css=css, xpath=xpath)
+        result = client.select(
+            tab=tab, value=value, css=css, xpath=xpath, wait_ms=wait_ms,
+        )
         console.print(f"[success]{result}[/success]")
+    except Exception as e:
+        handle_client_error(e)
+
+
+@app.command()
+def navigate(
+    url: str = typer.Argument(..., help="URL to navigate to"),
+    tab: str = typer.Option(..., "--tab", help="Target tab (br-XXXX:N)"),
+    wait: str = typer.Option("dom", "--wait", help="dom | full | none"),
+    timeout_ms: int = typer.Option(15000, "--timeout-ms", help="Navigation timeout in ms"),
+):
+    """Send the targeted tab to a URL."""
+    try:
+        result = client.navigate(tab=tab, url=url, wait=wait, timeout_ms=timeout_ms)
+        sys.stdout.write(result.get("url", ""))
+        sys.stdout.write("\n")
+    except Exception as e:
+        handle_client_error(e)
+
+
+@app.command("open")
+def open_cmd(
+    url: str = typer.Argument(..., help="URL to open"),
+    browser: str = typer.Option(..., "--browser", help="Target browser (br-XXXX)"),
+    wait: str = typer.Option("dom", "--wait", help="dom | full | none"),
+    timeout_ms: int = typer.Option(15000, "--timeout-ms", help="Navigation timeout in ms"),
+    activate: bool = typer.Option(False, "--activate", help="Focus the new tab"),
+):
+    """Open a URL in a new tab; prints the composite br-XXXX:N."""
+    try:
+        result = client.open(
+            browser=browser, url=url, wait=wait,
+            timeout_ms=timeout_ms, activate=activate,
+        )
+        sys.stdout.write(result.get("tab", ""))
+        sys.stdout.write("\n")
     except Exception as e:
         handle_client_error(e)
 
