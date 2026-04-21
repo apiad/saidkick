@@ -10,104 +10,96 @@
         });
     } catch (e) {}
 
-    // Listen for log messages from the MAIN world (main_world.js)
+    // Mirror logs from the MAIN world.
     window.addEventListener('message', (event) => {
-        // Only accept messages from the same window
         if (event.source !== window) return;
-
         const message = event.data;
         if (message && message.type === 'saidkick-log') {
             try {
-                chrome.runtime.sendMessage({
-                    type: "log",
-                    ...message.detail
-                });
-            } catch (e) {
-                // Context might be invalidated
-            }
+                chrome.runtime.sendMessage({ type: "log", ...message.detail });
+            } catch (e) { /* context may be invalidated */ }
         }
     });
 
-    // Handle commands from background script
+    function collectMatches(css, xpath) {
+        if (css) return Array.from(document.querySelectorAll(css));
+        if (xpath) {
+            const result = document.evaluate(
+                xpath, document, null,
+                XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
+            );
+            const nodes = [];
+            for (let i = 0; i < result.snapshotLength; i++) {
+                nodes.push(result.snapshotItem(i));
+            }
+            return nodes;
+        }
+        throw new Error("No selector provided");
+    }
+
+    async function waitForSelector(css, xpath, waitMs) {
+        const start = Date.now();
+        const POLL = 100;
+        while (true) {
+            const matches = collectMatches(css, xpath);
+            if (matches.length === 1) return matches[0];
+            if (matches.length > 1) {
+                if (Date.now() - start >= waitMs) {
+                    throw new Error(`Ambiguous selector: found ${matches.length} matches`);
+                }
+            } else if (Date.now() - start >= waitMs) {
+                throw new Error("element not found");
+            }
+            await new Promise(r => setTimeout(r, POLL));
+        }
+    }
+
+    async function waitForAnyMatches(css, xpath, waitMs) {
+        const start = Date.now();
+        const POLL = 100;
+        while (true) {
+            let matches;
+            try { matches = collectMatches(css, xpath); }
+            catch (e) { return []; }
+            if (matches.length >= 1) return matches;
+            if (Date.now() - start >= waitMs) return matches;
+            await new Promise(r => setTimeout(r, POLL));
+        }
+    }
+
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const { type, payload } = request;
 
-        const findElement = (css, xpath) => {
-            let elements = [];
-            if (css) {
-                elements = Array.from(document.querySelectorAll(css));
-            } else if (xpath) {
-                const result = document.evaluate(
-                    xpath,
-                    document,
-                    null,
-                    XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
-                    null
-                );
-                for (let i = 0; i < result.snapshotLength; i++) {
-                    elements.push(result.snapshotItem(i));
-                }
-            } else {
-                throw new Error("No selector provided");
-            }
+        const handle = async () => {
+            const waitMs = (payload && payload.wait_ms) || 0;
 
-            if (elements.length === 0) {
-                throw new Error("Element not found");
-            }
-            if (elements.length > 1) {
-                throw new Error(
-                    `Ambiguous selector: found ${elements.length} matches`
-                );
-            }
-            return elements[0];
-        };
-
-        if (type === "GET_DOM") {
-            const { css, xpath, all } = payload || {};
-            let matches = [];
-            try {
-                if (css) {
-                    matches = Array.from(document.querySelectorAll(css));
-                } else if (xpath) {
-                    const result = document.evaluate(
-                        xpath,
-                        document,
-                        null,
-                        XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
-                        null
-                    );
-                    for (let i = 0; i < result.snapshotLength; i++) {
-                        matches.push(result.snapshotItem(i));
-                    }
-                } else {
+            if (type === "GET_DOM") {
+                const { css, xpath, all } = payload || {};
+                let matches;
+                if (!css && !xpath) {
                     matches = [document.documentElement];
+                } else if (all) {
+                    matches = await waitForAnyMatches(css, xpath, waitMs);
+                    if (matches.length === 0) throw new Error("element not found");
+                } else {
+                    matches = [await waitForSelector(css, xpath, waitMs)];
                 }
-
                 const output = all
-                    ? matches.map((m) => m.outerHTML).join("\n")
-                    : matches[0]?.outerHTML || "";
-                sendResponse({ success: true, payload: output });
-            } catch (e) {
-                sendResponse({ success: false, payload: "Error: " + e.message });
+                    ? matches.map(m => m.outerHTML).join("\n")
+                    : matches[0].outerHTML;
+                return { success: true, payload: output };
             }
-        } else if (type === "CLICK") {
-            try {
-                const element = findElement(payload.css, payload.xpath);
+
+            if (type === "CLICK") {
+                const element = await waitForSelector(payload.css, payload.xpath, waitMs);
                 element.click();
-                // Dispatch synthetic events for frameworks
-                element.dispatchEvent(
-                    new MouseEvent("mousedown", { bubbles: true })
-                );
-                element.dispatchEvent(
-                    new MouseEvent("mouseup", { bubbles: true })
-                );
-                sendResponse({ success: true, payload: "Clicked" });
-            } catch (e) {
-                sendResponse({ success: false, payload: e.message });
+                element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+                return { success: true, payload: "Clicked" };
             }
-        } else if (type === "TYPE") {
-            try {
-                const element = findElement(payload.css, payload.xpath);
+
+            if (type === "TYPE") {
+                const element = await waitForSelector(payload.css, payload.xpath, waitMs);
                 element.focus();
                 if (payload.clear) {
                     if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
@@ -116,35 +108,26 @@
                         element.innerText = "";
                     }
                 }
-
                 const text = payload.text;
                 if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
                     element.value += text;
                 } else if (element.isContentEditable) {
                     element.innerText += text;
                 }
-
-                // Dispatch synthetic events
                 element.dispatchEvent(new Event("input", { bubbles: true }));
                 element.dispatchEvent(new Event("change", { bubbles: true }));
                 element.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true }));
                 element.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
-
-                sendResponse({ success: true, payload: "Typed" });
-            } catch (e) {
-                sendResponse({ success: false, payload: e.message });
+                return { success: true, payload: "Typed" };
             }
-        } else if (type === "SELECT") {
-            try {
-                const element = findElement(payload.css, payload.xpath);
+
+            if (type === "SELECT") {
+                const element = await waitForSelector(payload.css, payload.xpath, waitMs);
                 if (element.tagName !== "SELECT") {
                     throw new Error("Element is not a <select>");
                 }
-
                 const val = payload.value;
                 let found = false;
-
-                // Try by value
                 for (const option of element.options) {
                     if (option.value === val || option.text === val) {
                         element.value = option.value;
@@ -152,17 +135,26 @@
                         break;
                     }
                 }
-
-                if (!found) {
-                    throw new Error(`Option not found: ${val}`);
-                }
-
+                if (!found) throw new Error(`option not found: ${val}`);
                 element.dispatchEvent(new Event("change", { bubbles: true }));
-                sendResponse({ success: true, payload: "Selected" });
-            } catch (e) {
-                sendResponse({ success: false, payload: e.message });
+                return { success: true, payload: "Selected" };
             }
-        }
-        return true;
+
+            if (type === "GET_TEXT") {
+                const { css } = payload || {};
+                const element = css
+                    ? await waitForSelector(css, null, waitMs)
+                    : document.body;
+                return { success: true, payload: element.innerText || "" };
+            }
+
+            throw new Error(`unknown command: ${type}`);
+        };
+
+        handle().then(
+            result => sendResponse(result),
+            err => sendResponse({ success: false, payload: err.message })
+        );
+        return true;  // async sendResponse
     });
 })();
