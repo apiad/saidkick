@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-04-21
+
+### Features
+
+- **`POST /scroll`** + `saidkick scroll --tab T --by-text X [--block center|start|end|nearest] [--behavior auto|smooth]` — bring a located element into the viewport. Essential before screenshotting offscreen content; useful for infinite-scroll content extraction.
+- **`POST /highlight`** + `saidkick highlight --tab T --by-text X [--color red] [--duration-ms 2000]` — draw a temporary ring around a located element to point the user at it. Pair with `screenshot` to send the user an annotated image. Default duration 2s; `--duration-ms 0` persists until page reload. Uses `outline` (no layout shift) + soft halo `box-shadow`; restores original styles on timeout.
+
+Both accept the full locator surface (`--by-text`, `--by-label`, `--by-placeholder`, `--css`, `--xpath`, `--within-css`, `--nth`, `--exact`, `--regex`, `--wait-ms`).
+
 ## [0.4.2] - 2026-04-21
 
 ### Internal

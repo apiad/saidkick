@@ -169,6 +169,24 @@ class OpenRequest(BaseModel):
     activate: bool = False
 
 
+ScrollBlock = Literal["start", "center", "end", "nearest"]
+ScrollBehavior = Literal["auto", "smooth"]
+
+
+class ScrollRequest(Locator):
+    tab: str
+    block: ScrollBlock = "center"
+    behavior: ScrollBehavior = "auto"
+    wait_ms: int = 0
+
+
+class HighlightRequest(Locator):
+    tab: str
+    color: str = "#ff3b30"
+    duration_ms: int = 2000
+    wait_ms: int = 0
+
+
 def _parse_or_400(tab: str) -> Tuple[str, int]:
     try:
         return parse_tab_id(tab)
@@ -518,6 +536,42 @@ async def post_press(req: PressRequest):
         payload={
             "tab_id": tab_id, "key": req.key,
             "modifiers": req.modifiers, "wait_ms": req.wait_ms,
+            **_locator_payload(req),
+        },
+        timeout=_command_timeout(wait_ms=req.wait_ms),
+    )
+    if not response.get("success"):
+        _raise_for_extension_error(response.get("payload"))
+    return response.get("payload")
+
+
+@app.post("/scroll")
+async def post_scroll(req: ScrollRequest):
+    browser_id, tab_id = _parse_or_400(req.tab)
+    _validate_required_locator(req)
+    response = await manager.send_command(
+        browser_id, "SCROLL",
+        payload={
+            "tab_id": tab_id, "wait_ms": req.wait_ms,
+            "block": req.block, "behavior": req.behavior,
+            **_locator_payload(req),
+        },
+        timeout=_command_timeout(wait_ms=req.wait_ms),
+    )
+    if not response.get("success"):
+        _raise_for_extension_error(response.get("payload"))
+    return response.get("payload")
+
+
+@app.post("/highlight")
+async def post_highlight(req: HighlightRequest):
+    browser_id, tab_id = _parse_or_400(req.tab)
+    _validate_required_locator(req)
+    response = await manager.send_command(
+        browser_id, "HIGHLIGHT",
+        payload={
+            "tab_id": tab_id, "wait_ms": req.wait_ms,
+            "color": req.color, "duration_ms": req.duration_ms,
             **_locator_payload(req),
         },
         timeout=_command_timeout(wait_ms=req.wait_ms),

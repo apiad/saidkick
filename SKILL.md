@@ -117,6 +117,43 @@ saidkick screenshot --tab "$TAB" --full-page --output /tmp/full.png           # 
 
 Screenshots are cheap and extremely useful for verifying a multi-step flow landed — much more informative than probing the DOM for expected strings.
 
+### Pointing the user at a specific element
+
+When you're guiding the user — "click the Deploy button" — you have two complementary primitives:
+
+```bash
+saidkick scroll    --tab "$TAB" --by-text "Deploy"           # bring it into the viewport
+saidkick highlight --tab "$TAB" --by-text "Deploy"           # 2-second red ring around it
+saidkick screenshot --tab "$TAB" --output /tmp/point.png     # capture so the user sees the ring
+```
+
+Rules of thumb:
+
+- **Always `scroll` before `screenshot` on an offscreen element.** The screenshot captures the viewport; an element you find in the DOM isn't necessarily on-screen.
+- **`highlight` takes `--duration-ms`** — default 2000ms (fades on its own), `0` = persist until page reload. Use `0` when you're about to send the user a screenshot; default when you're narrating live and moving on.
+- **`--color` is any CSS color.** Use meaning: red (`#ff3b30`) = attention / danger, amber (`#f59e0b`) = warning / error in form field, green (`#34c759`) = success / "you just did this." Keep it consistent across a session.
+- **`scroll --block`**: `center` (default — most forgiving), `start` (pin to top — good for reading sequential content), `end` (bottom of viewport), `nearest` (minimal scroll).
+- **`scroll --behavior`**: `auto` (instant — default, good for scripting) or `smooth` (animated — good when the *user* is watching). On `smooth`, saidkick waits ~400ms so the returned rect reflects the final position.
+
+Typical pattern for "point at this":
+
+```bash
+TAB=br-XXXX:N
+LABEL="Invite team member"
+saidkick scroll    --tab "$TAB" --by-text "$LABEL"
+saidkick highlight --tab "$TAB" --by-text "$LABEL" --duration-ms 0
+saidkick screenshot --tab "$TAB" --output /tmp/next-step.png
+# show /tmp/next-step.png to the user; the ring is visible in the image
+```
+
+Typical pattern for infinite-scroll content extraction:
+
+```bash
+# Scroll to the last known item, wait for the next batch to load, read it
+saidkick scroll --tab "$TAB" --css ".feed-item:last-child" --behavior auto
+saidkick dom --tab "$TAB" --css ".feed-item" --all --wait-ms 3000
+```
+
 ### Keyboard shortcuts (Ctrl+K command palettes, etc.)
 
 ```bash

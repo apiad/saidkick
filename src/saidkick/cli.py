@@ -256,6 +256,62 @@ def select(
 
 
 @app.command()
+def scroll(
+    tab: str = typer.Option(..., "--tab"),
+    css: str = typer.Option(None, "--css"),
+    xpath: str = typer.Option(None, "--xpath"),
+    by_text: str = typer.Option(None, "--by-text"),
+    by_label: str = typer.Option(None, "--by-label"),
+    by_placeholder: str = typer.Option(None, "--by-placeholder"),
+    within_css: str = typer.Option(None, "--within-css"),
+    nth: int = typer.Option(None, "--nth"),
+    exact: bool = typer.Option(False, "--exact"),
+    regex: bool = typer.Option(False, "--regex"),
+    block: str = typer.Option("center", "--block", help="start | center | end | nearest"),
+    behavior: str = typer.Option("auto", "--behavior", help="auto | smooth"),
+    wait_ms: int = typer.Option(0, "--wait-ms"),
+):
+    """Scroll a located element into view."""
+    try:
+        out = client.scroll(
+            tab=tab, block=block, behavior=behavior, wait_ms=wait_ms,
+            **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
+                              within_css, nth, exact, regex),
+        )
+        console.print(f"[success]{out}[/success]")
+    except Exception as e:
+        handle_client_error(e)
+
+
+@app.command()
+def highlight(
+    tab: str = typer.Option(..., "--tab"),
+    css: str = typer.Option(None, "--css"),
+    xpath: str = typer.Option(None, "--xpath"),
+    by_text: str = typer.Option(None, "--by-text"),
+    by_label: str = typer.Option(None, "--by-label"),
+    by_placeholder: str = typer.Option(None, "--by-placeholder"),
+    within_css: str = typer.Option(None, "--within-css"),
+    nth: int = typer.Option(None, "--nth"),
+    exact: bool = typer.Option(False, "--exact"),
+    regex: bool = typer.Option(False, "--regex"),
+    color: str = typer.Option("#ff3b30", "--color", help="Any CSS color"),
+    duration_ms: int = typer.Option(2000, "--duration-ms", help="0 = persist until page reload"),
+    wait_ms: int = typer.Option(0, "--wait-ms"),
+):
+    """Draw a temporary ring around a located element — point the user at it."""
+    try:
+        out = client.highlight(
+            tab=tab, color=color, duration_ms=duration_ms, wait_ms=wait_ms,
+            **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
+                              within_css, nth, exact, regex),
+        )
+        console.print(f"[success]{out}[/success]")
+    except Exception as e:
+        handle_client_error(e)
+
+
+@app.command()
 def press(
     key: str = typer.Argument(..., help="Enter, Escape, Tab, a, ArrowDown, ..."),
     tab: str = typer.Option(..., "--tab"),

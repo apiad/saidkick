@@ -20,6 +20,8 @@ It's the right size for **terminal-driven debugging, agent automation, and perso
 ## ⚡ Features
 
 * **🎯 Semantic locators.** Target elements by what the user sees: `--by-text "Send"`, `--by-label "Password"`, `--by-placeholder "Search…"`. Falls back to CSS/XPath when you need precision.
+* **🧭 Scroll-into-view.** `saidkick scroll --tab $TAB --by-text "Chapter 3"` brings an element into the viewport — essential before screenshotting something offscreen, and handy for pulling more content on infinite-scroll pages.
+* **🔴 Highlight.** `saidkick highlight --tab $TAB --by-text "Deploy"` draws a temporary red ring around an element. Use it to point the user at *exactly* what to click when you're guiding them — pair with `screenshot` and they see the ring in the image.
 * **🔤 Real keyboard events.** `saidkick press Enter --tab $TAB` dispatches a native CDP `Input.dispatchKeyEvent` — frameworks (Lexical, ProseMirror, React) treat it as a real keystroke, not a synthesised blob.
 * **📸 Screenshots.** `saidkick screenshot --tab $TAB --output /tmp/shot.png` via CDP `Page.captureScreenshot`. Optional locator clips to an element; `--full-page` captures beyond the viewport.
 * **✍️ Rich-text input.** `saidkick type` understands `contenteditable` via `document.execCommand("insertText", …)` — works on WhatsApp, Slack, Discord, Gmail compose, GitHub comments, Notion, and every other Lexical/ProseMirror/Quill/Slate/Draft-backed editor.
@@ -84,6 +86,31 @@ saidkick screenshot --tab "$TAB" --output /tmp/sent.png
 
 That's WhatsApp Web, Slack, Discord, Gmail compose, or any similar app, in four lines.
 
+## 🧭 Pointing the user at something
+
+When an agent is guiding the user through an app, it often needs to say "click *this* button." Two primitives make that precise:
+
+```bash
+# Scroll the element into view (it may be offscreen)
+saidkick scroll --tab "$TAB" --by-text "Deploy"
+
+# Draw a temporary red ring around it (default 2s)
+saidkick highlight --tab "$TAB" --by-text "Deploy"
+
+# Screenshot so the user sees the ring in the image too
+saidkick screenshot --tab "$TAB" --output /tmp/click-this.png
+```
+
+Good uses:
+
+- **"Click that button"** — highlight + screenshot + send the image to the user.
+- **"The error is in this field"** — `highlight --color "#f59e0b"` (amber) on a form field the user needs to correct.
+- **Pre-screenshot framing** — `scroll` before `screenshot` so what you want to capture is actually in the viewport.
+- **Checklist walkthroughs** — highlight each step as you narrate it; use `--duration-ms 0` to keep the ring up until you place the next one.
+- **Infinite-scroll content extraction** — scroll to the last visible item, wait for more to load, repeat.
+
+`scroll` takes `--block {center|start|end|nearest}` and `--behavior {auto|smooth}`. `highlight` takes `--color` (any CSS color) and `--duration-ms` (0 = persist until page reload).
+
 ## 🧭 Command reference
 
 | Command | What it does |
@@ -97,6 +124,8 @@ That's WhatsApp Web, Slack, Discord, Gmail compose, or any similar app, in four 
 | `saidkick type "msg" --tab T --by-label X` | Type (contenteditable-aware). |
 | `saidkick select "value" --tab T --css X` | Select an `<option>`. |
 | `saidkick press Enter --tab T [--mod ctrl,shift]` | Dispatch a keyboard event. |
+| `saidkick scroll --tab T --by-text X [--block center\|start\|end]` | Scroll element into view. |
+| `saidkick highlight --tab T --by-text X [--color red] [--duration-ms N]` | Temporary ring around an element. |
 | `saidkick screenshot --tab T [--output PATH]` | Capture PNG. |
 | `saidkick navigate URL --tab T [--wait dom\|full\|none]` | Redirect a tab. |
 | `saidkick open URL --browser BR` | New tab; prints the composite `br-XXXX:N`. |

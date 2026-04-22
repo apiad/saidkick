@@ -133,6 +133,36 @@ class SaidkickClient:
         r.raise_for_status()
         return r.json()
 
+    def scroll(
+        self, tab: str, block: str = "center", behavior: str = "auto",
+        wait_ms: int = 0, **locator,
+    ) -> Dict[str, Any]:
+        r = httpx.post(
+            f"{self.base_url}/scroll",
+            json={
+                "tab": tab, "block": block, "behavior": behavior,
+                "wait_ms": wait_ms, **self._locator_params(**locator),
+            },
+            timeout=wait_ms / 1000 + 10,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def highlight(
+        self, tab: str, color: str = "#ff3b30",
+        duration_ms: int = 2000, wait_ms: int = 0, **locator,
+    ) -> Dict[str, Any]:
+        r = httpx.post(
+            f"{self.base_url}/highlight",
+            json={
+                "tab": tab, "color": color, "duration_ms": duration_ms,
+                "wait_ms": wait_ms, **self._locator_params(**locator),
+            },
+            timeout=wait_ms / 1000 + 10,
+        )
+        r.raise_for_status()
+        return r.json()
+
     def press(
         self, tab: str, key: str,
         modifiers: Optional[List[str]] = None, wait_ms: int = 0, **locator,

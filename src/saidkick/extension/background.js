@@ -310,7 +310,7 @@ function connect() {
             return;
         }
 
-        if (["GET_DOM", "CLICK", "TYPE", "SELECT", "GET_TEXT", "FIND"].includes(type)) {
+        if (["GET_DOM", "CLICK", "TYPE", "SELECT", "GET_TEXT", "FIND", "SCROLL", "HIGHLIGHT"].includes(type)) {
             sendToContentScript(tab.id, { type, payload }, id);
         } else if (type === "PRESS") {
             try {

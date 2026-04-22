@@ -269,6 +269,59 @@
                 }};
             }
 
+            if (type === "SCROLL") {
+                const el = await waitForLocator(payload, waitMs);
+                const block = payload.block || "center";
+                const behavior = payload.behavior || "auto";
+                el.scrollIntoView({ block, inline: "nearest", behavior });
+                // For smooth scroll, wait for it to finish so the returned rect is accurate.
+                if (behavior === "smooth") {
+                    await new Promise(r => setTimeout(r, 400));
+                } else {
+                    await new Promise(r => setTimeout(r, 50));
+                }
+                const rect = el.getBoundingClientRect();
+                return { success: true, payload: {
+                    scrolled_to: {
+                        x: Math.round(rect.x), y: Math.round(rect.y),
+                        width: Math.round(rect.width), height: Math.round(rect.height),
+                    }
+                }};
+            }
+
+            if (type === "HIGHLIGHT") {
+                const el = await waitForLocator(payload, waitMs);
+                const color = payload.color || "#ff3b30";
+                const duration = typeof payload.duration_ms === "number" ? payload.duration_ms : 2000;
+                // Use outline (no layout shift) + offset so the ring stands off the element.
+                const prev = {
+                    outline: el.style.outline,
+                    outlineOffset: el.style.outlineOffset,
+                    boxShadow: el.style.boxShadow,
+                    transition: el.style.transition,
+                };
+                el.style.outline = `3px solid ${color}`;
+                el.style.outlineOffset = "3px";
+                el.style.boxShadow = `0 0 0 6px ${color}33`;  // soft halo
+                el.style.transition = "outline 120ms ease, box-shadow 120ms ease";
+                if (duration > 0) {
+                    setTimeout(() => {
+                        el.style.outline = prev.outline;
+                        el.style.outlineOffset = prev.outlineOffset;
+                        el.style.boxShadow = prev.boxShadow;
+                        el.style.transition = prev.transition;
+                    }, duration);
+                }
+                const rect = el.getBoundingClientRect();
+                return { success: true, payload: {
+                    highlighted: {
+                        x: Math.round(rect.x), y: Math.round(rect.y),
+                        width: Math.round(rect.width), height: Math.round(rect.height),
+                    },
+                    duration_ms: duration,
+                }};
+            }
+
             throw new Error(`unknown command: ${type}`);
         };
 
