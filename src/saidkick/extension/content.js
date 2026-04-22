@@ -1,4 +1,10 @@
 (function() {
+    // Guard against double-registration when the manifest content_scripts
+    // entry and a programmatic chrome.scripting.executeScript both inject
+    // this file on the same tab (race on fresh-load / extension-reload).
+    if (window.__saidkickContentInstalled) return;
+    window.__saidkickContentInstalled = true;
+
     console.log("Saidkick: Content script (isolated world) initializing");
     try {
         chrome.runtime.sendMessage({
@@ -193,13 +199,22 @@
                     element.dispatchEvent(new Event("change", { bubbles: true }));
                     return { success: true, payload: "Typed" };
                 }
-                if (payload.clear) {
-                    if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
-                        element.value = "";
-                    }
-                }
                 if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
-                    element.value += payload.text;
+                    // React / Preact / Vue2 / Svelte track the value via a
+                    // prototype-level setter. Direct `.value =` bypasses that,
+                    // so the framework's state stays stale and re-renders wipe
+                    // the text. Use the native descriptor setter to route the
+                    // assignment through the framework's hooks.
+                    const proto = element.tagName === "TEXTAREA"
+                        ? HTMLTextAreaElement.prototype
+                        : HTMLInputElement.prototype;
+                    const valueSetter = Object.getOwnPropertyDescriptor(proto, "value").set;
+                    const nextValue = payload.clear ? payload.text : (element.value + payload.text);
+                    valueSetter.call(element, nextValue);
+                } else {
+                    // Fallback for non-input elements we've been asked to type into
+                    // (unusual — usually rejected by the caller).
+                    element.textContent = (payload.clear ? "" : element.textContent) + payload.text;
                 }
                 element.dispatchEvent(new Event("input", { bubbles: true }));
                 element.dispatchEvent(new Event("change", { bubbles: true }));

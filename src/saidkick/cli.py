@@ -50,13 +50,28 @@ def _locator_kwargs(
 
 
 @app.command()
-def start(host: str = "0.0.0.0", port: int = 6992, reload: bool = False):
+def start(
+    host: str = typer.Option(
+        "127.0.0.1", "--host",
+        help="Bind address. Default 127.0.0.1 (localhost-only). "
+             "Use '0.0.0.0' to expose on LAN — anyone who can reach this port "
+             "can run arbitrary JS in your logged-in browser tabs.",
+    ),
+    port: int = typer.Option(6992, "--port"),
+    reload: bool = typer.Option(False, "--reload", help="Auto-reload for development."),
+):
     """Start the Saidkick FastAPI server."""
     logging.basicConfig(
         level="INFO", format="%(message)s", datefmt="[%X]",
         handlers=[RichHandler(rich_tracebacks=True, console=console)],
     )
     logging.getLogger("saidkick").setLevel(logging.INFO)
+    if host == "0.0.0.0":
+        console.print(
+            "[warning]⚠  host=0.0.0.0 exposes saidkick on every interface. "
+            "Anyone who can reach this port can drive your browser. "
+            "Use 127.0.0.1 (default) unless you intend LAN/remote access.[/warning]"
+        )
     uvicorn.run("saidkick.server:app", host=host, port=port, reload=reload, log_level="info")
 
 

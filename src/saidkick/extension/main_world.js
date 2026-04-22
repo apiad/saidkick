@@ -1,4 +1,10 @@
 (function() {
+    // Guard against double-installation. main_world.js runs in the page's
+    // MAIN world; if injected twice (manifest + chrome.scripting race) we'd
+    // wrap the already-wrapped console, producing compound handlers.
+    if (window.__saidkickMainWorldInstalled) return;
+    window.__saidkickMainWorldInstalled = true;
+
     const originalConsole = {
         log: console.log,
         warn: console.warn,

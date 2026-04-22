@@ -169,6 +169,21 @@ function sendToContentScript(tabId, msg, requestId, retried = false) {
     }
 }
 
+// Guarded send helper — checks socket state before every outbound frame so
+// a racing socket-close doesn't throw synchronously in the middle of a
+// response dispatch.
+function sendResponse(id, success, payload) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        console.warn("Saidkick: dropping response for", id, "— socket not open");
+        return;
+    }
+    try {
+        socket.send(JSON.stringify({ type: "RESPONSE", id, success, payload }));
+    } catch (err) {
+        console.warn("Saidkick: socket.send threw for", id, ":", err);
+    }
+}
+
 function connect() {
     socket = new WebSocket(SERVER_URL);
 
@@ -190,9 +205,21 @@ function connect() {
     };
 
     socket.onmessage = async (event) => {
-        const message = JSON.parse(event.data);
+        // Binary frames should not occur with our server, but guard so we
+        // don't JSON.parse a Blob.
+        if (typeof event.data !== "string") return;
+
+        let message;
+        try {
+            message = JSON.parse(event.data);
+        } catch (e) {
+            console.warn("Saidkick: malformed WS frame, ignoring:", e.message);
+            return;
+        }
+
         const { type, id, payload } = message;
 
+        try {
         if (type === "HELLO") {
             browserId = message.browser_id;
             console.log(`Saidkick: connected as ${browserId}`);
@@ -419,6 +446,11 @@ function connect() {
                     payload: error.message || String(error),
                 }));
             }
+        }
+        } catch (err) {
+            // Last-ditch safety net: any uncaught failure in a branch body
+            // sends a RESPONSE so the server doesn't 504 in silence.
+            sendResponse(id, false, `extension uncaught: ${err.message || err}`);
         }
     };
 

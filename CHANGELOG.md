@@ -4,6 +4,22 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-04-21
+
+### Security
+
+- **Default host is now `127.0.0.1` instead of `0.0.0.0`.** Previously anyone on the LAN could hit `/execute` and run arbitrary JS in the user's logged-in Chrome session. Opting into LAN/remote access requires `--host 0.0.0.0` and prints a ⚠ warning at startup. **Breaking for anyone who relied on the default LAN exposure.**
+
+### Fixes
+
+- **React-compatible `type`.** The non-contenteditable branch now calls the native value setter via `Object.getOwnPropertyDescriptor(proto, "value").set` instead of assigning `.value` directly. Fixes React / Preact / Vue-2 / Svelte inputs where framework state tracked through a prototype-level setter was bypassed, causing typed text to vanish on next re-render.
+- **Double-injection guard.** `content.js` and `main_world.js` now no-op if already installed on the same page — the manifest `content_scripts` entry and the programmatic `chrome.scripting.executeScript` fallback used to race and install twice on fresh tabs, producing duplicate RESPONSEs and compound console overrides.
+- **Extension-side error hygiene.** `socket.onmessage` wraps the command dispatch in a top-level try/catch; unhandled exceptions now bubble up as an error `RESPONSE` instead of silently 504-ing the server. Binary WebSocket frames and malformed JSON are skipped cleanly.
+
+### Internal
+
+- `manifest.json` sets `minimum_chrome_version: "111"` — we depend on MV3 content-script `world: "MAIN"` (Chrome 111+) and CDP features that shipped later.
+
 ## [0.4.3] - 2026-04-21
 
 ### Features
