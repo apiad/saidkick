@@ -4,6 +4,24 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-04-21
+
+### Fixes
+
+- **MV3 service-worker session durability.** The extension now sends a `PING` frame every 20s; the server replies with `PONG`. Active WebSocket traffic within Chrome's 30s SW-idle window keeps the service worker awake — prior to this, `br-XXXX` IDs changed silently every time the SW went idle, invalidating any `$TAB` captured from earlier commands.
+- **Alarm-based reconnection watchdog.** `chrome.alarms` fires every 30s; if the socket isn't `OPEN`, re-runs `connect()`. Survives SW death (the prior `setTimeout(connect, 5000)` chain died with the SW).
+- **Debugger detach on tab close.** Tracks attached tab IDs in a Set; on `chrome.tabs.onRemoved`, calls `chrome.debugger.detach`. Stops the "Saidkick started debugging this browser" yellow banner from accumulating across closed tabs.
+
+### Features
+
+- **Popup shows "reconnected as new br-XXXX".** When the SW reconnects and the server issues a different browser ID, the popup surfaces both so callers know their previous `$TAB` is stale.
+
+### Internal
+
+- `SaidkickManager` tracks `last_seen: Dict[str, float]` per browser, updated on every inbound frame. Not exposed in an endpoint yet; plumbing for future health views.
+- Server routes `PING` → `PONG` in the WS endpoint; every inbound frame touches `last_seen`.
+- `manifest.json` adds `alarms` permission.
+
 ## [0.4.4] - 2026-04-21
 
 ### Security

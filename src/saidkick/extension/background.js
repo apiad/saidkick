@@ -1,7 +1,12 @@
 let socket = null;
 let browserId = null;
+let previousBrowserId = null;  // for "reconnected as new br-XXXX" popup hint
 const SERVER_URL = "ws://localhost:6992/ws";
 const logQueue = [];
+const attachedTabs = new Set();  // tabIds we've attached the debugger to
+let keepaliveInterval = null;
+const KEEPALIVE_MS = 20_000;  // inside MV3's 30s SW idle window
+const RECONNECT_ALARM = "saidkick-reconnect-watchdog";
 
 async function ensureDebuggerAttached(tabId) {
     const target = { tabId };
@@ -11,6 +16,7 @@ async function ensureDebuggerAttached(tabId) {
             if (err && !err.message.includes("already attached")) {
                 reject(err);
             } else {
+                attachedTabs.add(tabId);
                 resolve();
             }
         });
@@ -22,6 +28,21 @@ async function ensureDebuggerAttached(tabId) {
         chrome.debugger.sendCommand(target, "Runtime.enable", {}, r)
     );
 }
+
+// Detach when a debugged tab is closed so we don't leak state and so the
+// user doesn't see "Saidkick started debugging this browser" banners
+// accumulate across tabs that no longer exist.
+chrome.tabs.onRemoved.addListener((tabId) => {
+    if (!attachedTabs.has(tabId)) return;
+    attachedTabs.delete(tabId);
+    try {
+        chrome.debugger.detach({ tabId }, () => {
+            // Ignore chrome.runtime.lastError — the tab is gone; the
+            // detach would have happened automatically.
+            void chrome.runtime.lastError;
+        });
+    } catch (_) { /* ignore */ }
+});
 
 function waitForPageEvent(tabId, eventName, timeoutMs) {
     return new Promise((resolve, reject) => {
@@ -198,10 +219,20 @@ function connect() {
         socket.send(JSON.stringify(logMsg));
         console.log(logMsg.data);
 
-        // Send queued logs
+        // Send queued logs (bounded — 0.5.1 further caps the queue)
         while (logQueue.length > 0) {
             socket.send(JSON.stringify(logQueue.shift()));
         }
+
+        // Keepalive: active WS traffic within the 30s MV3 idle window keeps
+        // the service worker awake. Send PING every 20s; server replies PONG.
+        if (keepaliveInterval) clearInterval(keepaliveInterval);
+        keepaliveInterval = setInterval(() => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                try { socket.send(JSON.stringify({ type: "PING" })); }
+                catch (_) { /* racing close — next tick will reconnect */ }
+            }
+        }, KEEPALIVE_MS);
     };
 
     socket.onmessage = async (event) => {
@@ -221,8 +252,18 @@ function connect() {
 
         try {
         if (type === "HELLO") {
+            previousBrowserId = browserId;
             browserId = message.browser_id;
-            console.log(`Saidkick: connected as ${browserId}`);
+            if (previousBrowserId && previousBrowserId !== browserId) {
+                console.log(`Saidkick: reconnected as ${browserId} (was ${previousBrowserId})`);
+            } else {
+                console.log(`Saidkick: connected as ${browserId}`);
+            }
+            return;
+        }
+
+        if (type === "PONG") {
+            // Keepalive ack — just swallow it.
             return;
         }
 
@@ -456,6 +497,7 @@ function connect() {
 
     socket.onclose = () => {
         console.log("Saidkick: Connection closed, retrying in 5s...");
+        if (keepaliveInterval) { clearInterval(keepaliveInterval); keepaliveInterval = null; }
         setTimeout(connect, 5000);
     };
 
@@ -464,12 +506,26 @@ function connect() {
     };
 }
 
+// Belt-and-braces reconnection watchdog: even with keepalive, if the SW is
+// killed (e.g. extension reload, chrome restart, crash) the setTimeout chain
+// dies with it. chrome.alarms survives SW death and fires to wake us; we
+// reconcile by reconnecting if the socket isn't OPEN.
+chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name !== RECONNECT_ALARM) return;
+    if (!socket || socket.readyState === WebSocket.CLOSED) {
+        console.log("Saidkick: alarm watchdog reconnecting");
+        connect();
+    }
+});
+
 function getStatus() {
     const state = socket ? socket.readyState : WebSocket.CLOSED;
     return {
         connected: state === WebSocket.OPEN,
         connecting: state === WebSocket.CONNECTING,
         browserId: browserId,
+        previousBrowserId: (previousBrowserId && previousBrowserId !== browserId) ? previousBrowserId : null,
         serverUrl: SERVER_URL,
     };
 }

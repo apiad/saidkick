@@ -198,6 +198,7 @@ class SaidkickManager:
         self.logs = deque(maxlen=max_logs)
         self.connections: Dict[str, WebSocket] = {}
         self.pending_requests: Dict[str, asyncio.Future] = {}
+        self.last_seen: Dict[str, float] = {}  # browser_id -> epoch seconds
 
     def _random_browser_id(self) -> str:
         # 4 hex chars = 65k space, ample for expected usage.
@@ -215,13 +216,21 @@ class SaidkickManager:
         await websocket.accept()
         browser_id = self.generate_browser_id()
         self.connections[browser_id] = websocket
+        import time
+        self.last_seen[browser_id] = time.time()
         logger.info(f"[status] Browser connected: {browser_id}")
         return browser_id
 
     def remove_connection(self, browser_id: str):
         if browser_id in self.connections:
             del self.connections[browser_id]
+            self.last_seen.pop(browser_id, None)
             logger.info(f"[status] Browser disconnected: {browser_id}")
+
+    def touch(self, browser_id: str) -> None:
+        """Mark the browser as recently seen. Called on every inbound frame."""
+        import time
+        self.last_seen[browser_id] = time.time()
 
     def handle_log(self, browser_id: str, message: Dict[str, Any]):
         level = message.get("level", "info").upper()
@@ -296,11 +305,16 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
+            manager.touch(browser_id)
             msg_type = message.get("type")
             if msg_type == "log":
                 manager.handle_log(browser_id, message)
             elif msg_type == "RESPONSE":
                 manager.handle_response(message)
+            elif msg_type == "PING":
+                # Keepalive: reply with PONG so the extension's active
+                # WebSocket traffic keeps the MV3 service worker awake.
+                await websocket.send_text(json.dumps({"type": "PONG"}))
     except WebSocketDisconnect:
         manager.remove_connection(browser_id)
     except Exception as e:

@@ -30,7 +30,13 @@ async function refresh() {
         } else {
             setState("bad", "disconnected");
         }
-        browserIdEl.textContent = res.browserId || "—";
+        if (res.previousBrowserId) {
+            browserIdEl.textContent = `${res.browserId} (was ${res.previousBrowserId})`;
+            browserIdEl.title = "Browser ID changed. Any TAB captured from a previous run is stale — re-list tabs.";
+        } else {
+            browserIdEl.textContent = res.browserId || "—";
+            browserIdEl.title = "";
+        }
         serverUrlEl.textContent = res.serverUrl || "—";
     } catch (err) {
         setState("bad", "error");

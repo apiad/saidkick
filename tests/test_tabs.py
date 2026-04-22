@@ -287,3 +287,13 @@ def test_type_unknown_extension_error_is_502():
             "/type", json={"tab": "br-aaaa:1", "css": "#x", "text": "y"}
         )
     assert r.status_code == 502
+
+
+def test_ws_ping_is_acked_with_pong():
+    c = TestClient(app)
+    manager.connections.clear()
+    with c.websocket_connect("/ws") as ws:
+        ws.receive_json()  # HELLO
+        ws.send_json({"type": "PING"})
+        reply = ws.receive_json()
+        assert reply == {"type": "PONG"}
