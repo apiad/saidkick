@@ -74,13 +74,15 @@ class Locator(BaseModel):
     by_text: Optional[str] = None
     by_label: Optional[str] = None
     by_placeholder: Optional[str] = None
+    by_role: Optional[str] = None
     within_css: Optional[str] = None
     nth: Optional[int] = None
     exact: bool = False
     regex: bool = False
+    pierce_shadow: bool = False
 
 
-_LOCATOR_FIELDS = ("css", "xpath", "by_text", "by_label", "by_placeholder")
+_LOCATOR_FIELDS = ("css", "xpath", "by_text", "by_label", "by_placeholder", "by_role")
 
 
 def _count_locators(loc: Locator) -> int:
@@ -113,8 +115,10 @@ def _locator_payload(loc: Locator) -> Dict[str, Any]:
         "css": loc.css, "xpath": loc.xpath,
         "by_text": loc.by_text, "by_label": loc.by_label,
         "by_placeholder": loc.by_placeholder,
+        "by_role": loc.by_role,
         "within_css": loc.within_css, "nth": loc.nth,
         "exact": loc.exact, "regex": loc.regex,
+        "pierce_shadow": loc.pierce_shadow,
     }
 
 
@@ -185,6 +189,11 @@ class HighlightRequest(Locator):
     color: str = "#ff3b30"
     duration_ms: int = 2000
     wait_ms: int = 0
+
+
+class MirrorRequest(BaseModel):
+    tab: str
+    enabled: bool
 
 
 def _parse_or_400(tab: str) -> Tuple[str, int]:
@@ -589,6 +598,32 @@ async def post_highlight(req: HighlightRequest):
             **_locator_payload(req),
         },
         timeout=_command_timeout(wait_ms=req.wait_ms),
+    )
+    if not response.get("success"):
+        _raise_for_extension_error(response.get("payload"))
+    return response.get("payload")
+
+
+@app.post("/mirror")
+async def post_mirror(req: MirrorRequest):
+    browser_id, tab_id = _parse_or_400(req.tab)
+    response = await manager.send_command(
+        browser_id, "SET_MIRROR",
+        payload={"tab_id": tab_id, "enabled": req.enabled},
+        timeout=_command_timeout(),
+    )
+    if not response.get("success"):
+        _raise_for_extension_error(response.get("payload"))
+    return response.get("payload")
+
+
+@app.get("/mirror")
+async def get_mirror(tab: str):
+    browser_id, tab_id = _parse_or_400(tab)
+    response = await manager.send_command(
+        browser_id, "GET_MIRROR",
+        payload={"tab_id": tab_id},
+        timeout=_command_timeout(),
     )
     if not response.get("success"):
         _raise_for_extension_error(response.get("payload"))

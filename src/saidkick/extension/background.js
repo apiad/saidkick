@@ -21,12 +21,107 @@ async function ensureDebuggerAttached(tabId) {
             }
         });
     });
-    await new Promise(r =>
-        chrome.debugger.sendCommand(target, "Page.enable", {}, r)
+    await new Promise((resolve, reject) =>
+        chrome.debugger.sendCommand(target, "Page.enable", {}, () =>
+            chrome.runtime.lastError ? reject(chrome.runtime.lastError) : resolve()
+        )
     );
-    await new Promise(r =>
-        chrome.debugger.sendCommand(target, "Runtime.enable", {}, r)
+    await new Promise((resolve, reject) =>
+        chrome.debugger.sendCommand(target, "Runtime.enable", {}, () =>
+            chrome.runtime.lastError ? reject(chrome.runtime.lastError) : resolve()
+        )
     );
+}
+
+// Resolve `by_role` (+ optional `by_text` for the accessible name) to a
+// unique CSS selector for the DOM node, via CDP's Accessibility domain.
+// Everything else in the locator stack lives in content.js and speaks CSS,
+// so we do the AXTree resolution background-side and then rewrite the payload
+// to use `css:` with the computed selector.
+async function resolveByRole(tabId, locator) {
+    await ensureDebuggerAttached(tabId);
+    const target = { tabId };
+
+    const tree = await new Promise((resolve, reject) => {
+        chrome.debugger.sendCommand(target, "Accessibility.getFullAXTree", {}, (result) => {
+            chrome.runtime.lastError ? reject(chrome.runtime.lastError) : resolve(result);
+        });
+    });
+    const nodes = tree.nodes || [];
+    const wantRole = (locator.by_role || "").toLowerCase();
+    const nameNeedle = locator.by_text;
+
+    const nameMatches = (name) => {
+        if (nameNeedle == null) return true;
+        if (locator.regex) {
+            try { return new RegExp(nameNeedle).test(name); }
+            catch (e) { return false; }
+        }
+        if (locator.exact) return name === nameNeedle;
+        return (name || "").toLowerCase().includes(nameNeedle.toLowerCase());
+    };
+
+    const candidates = nodes.filter(n => {
+        if (n.ignored) return false;
+        const role = (n.role && n.role.value || "").toLowerCase();
+        if (role !== wantRole) return false;
+        const name = (n.name && n.name.value) || "";
+        return nameMatches(name) && n.backendDOMNodeId != null;
+    });
+
+    if (candidates.length === 0) {
+        throw new Error("element not found");
+    }
+    // If nth is provided, pick; otherwise require uniqueness.
+    let picks;
+    if (locator.nth != null) {
+        const c = candidates[locator.nth];
+        if (!c) throw new Error("element not found");
+        picks = [c];
+    } else if (candidates.length > 1) {
+        throw new Error(`Ambiguous locator: found ${candidates.length} matches`);
+    } else {
+        picks = candidates;
+    }
+
+    const pick = picks[0];
+    // Resolve the backend node into a Runtime RemoteObject so we can call a
+    // function on it that computes a unique CSS path.
+    const resolved = await new Promise((resolve, reject) => {
+        chrome.debugger.sendCommand(target, "DOM.resolveNode",
+            { backendNodeId: pick.backendDOMNodeId },
+            (r) => chrome.runtime.lastError ? reject(chrome.runtime.lastError) : resolve(r)
+        );
+    });
+    const objectId = resolved.object.objectId;
+
+    const pathFn = `function() {
+        const el = this;
+        if (!(el instanceof Element)) return "";
+        if (el.id) return "#" + CSS.escape(el.id);
+        const parts = [];
+        let cur = el;
+        while (cur && cur.nodeType === 1 && cur !== document.body) {
+            let part = cur.tagName.toLowerCase();
+            const parent = cur.parentElement;
+            if (parent) {
+                const sibs = Array.from(parent.children).filter(s => s.tagName === cur.tagName);
+                if (sibs.length > 1) part += ":nth-of-type(" + (sibs.indexOf(cur) + 1) + ")";
+            }
+            parts.unshift(part);
+            cur = parent;
+        }
+        return "body > " + parts.join(" > ");
+    }`;
+    const call = await new Promise((resolve, reject) => {
+        chrome.debugger.sendCommand(target, "Runtime.callFunctionOn",
+            { objectId, functionDeclaration: pathFn, returnByValue: true },
+            (r) => chrome.runtime.lastError ? reject(chrome.runtime.lastError) : resolve(r)
+        );
+    });
+    const selector = call && call.result && call.result.value;
+    if (!selector) throw new Error("could not compute selector for AXTree match");
+    return selector;
 }
 
 // Detach when a debugged tab is closed so we don't leak state and so the
@@ -378,8 +473,21 @@ function connect() {
             return;
         }
 
-        if (["GET_DOM", "CLICK", "TYPE", "SELECT", "GET_TEXT", "FIND", "SCROLL", "HIGHLIGHT"].includes(type)) {
-            sendToContentScript(tab.id, { type, payload }, id);
+        if (["GET_DOM", "CLICK", "TYPE", "SELECT", "GET_TEXT", "FIND", "SCROLL", "HIGHLIGHT",
+             "SET_MIRROR", "GET_MIRROR"].includes(type)) {
+            // If `by_role` is set, resolve background-side via CDP AXTree,
+            // then rewrite the payload to use the computed CSS selector.
+            let forwardPayload = payload;
+            if (payload && payload.by_role) {
+                try {
+                    const selector = await resolveByRole(tab.id, payload);
+                    forwardPayload = { ...payload, css: selector, by_role: null, by_text: null };
+                } catch (err) {
+                    sendResponse(id, false, err.message || String(err));
+                    return;
+                }
+            }
+            sendToContentScript(tab.id, { type, payload: forwardPayload }, id);
         } else if (type === "PRESS") {
             try {
                 await ensureDebuggerAttached(tab.id);

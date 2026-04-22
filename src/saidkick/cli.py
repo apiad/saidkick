@@ -41,10 +41,12 @@ def _locator_kwargs(
     by_text: Optional[str], by_label: Optional[str], by_placeholder: Optional[str],
     within_css: Optional[str], nth: Optional[int],
     exact: bool, regex: bool,
+    by_role: Optional[str] = None, pierce_shadow: bool = False,
 ):
     return dict(
         css=css, xpath=xpath,
         by_text=by_text, by_label=by_label, by_placeholder=by_placeholder,
+        by_role=by_role, pierce_shadow=pierce_shadow,
         within_css=within_css, nth=nth, exact=exact, regex=regex,
     )
 
@@ -116,6 +118,8 @@ def find(
     by_text: str = typer.Option(None, "--by-text"),
     by_label: str = typer.Option(None, "--by-label"),
     by_placeholder: str = typer.Option(None, "--by-placeholder"),
+    by_role: str = typer.Option(None, "--by-role"),
+    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
     within_css: str = typer.Option(None, "--within-css"),
     nth: int = typer.Option(None, "--nth"),
     exact: bool = typer.Option(False, "--exact"),
@@ -128,7 +132,8 @@ def find(
         out = client.find(
             tab=tab, wait_ms=wait_ms,
             **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex),
+                              within_css, nth, exact, regex,
+                              by_role=by_role, pierce_shadow=pierce_shadow),
         )
         sys.stdout.write(json.dumps(out, indent=2))
         sys.stdout.write("\n")
@@ -144,6 +149,8 @@ def dom(
     by_text: str = typer.Option(None, "--by-text"),
     by_label: str = typer.Option(None, "--by-label"),
     by_placeholder: str = typer.Option(None, "--by-placeholder"),
+    by_role: str = typer.Option(None, "--by-role"),
+    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
     within_css: str = typer.Option(None, "--within-css"),
     nth: int = typer.Option(None, "--nth"),
     exact: bool = typer.Option(False, "--exact"),
@@ -156,7 +163,8 @@ def dom(
         out = client.get_dom(
             tab=tab, all_matches=all_matches, wait_ms=wait_ms,
             **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex),
+                              within_css, nth, exact, regex,
+                              by_role=by_role, pierce_shadow=pierce_shadow),
         )
         sys.stdout.write(str(out)); sys.stdout.write("\n")
     except Exception as e:
@@ -171,6 +179,8 @@ def text(
     by_text: str = typer.Option(None, "--by-text"),
     by_label: str = typer.Option(None, "--by-label"),
     by_placeholder: str = typer.Option(None, "--by-placeholder"),
+    by_role: str = typer.Option(None, "--by-role"),
+    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
     within_css: str = typer.Option(None, "--within-css"),
     nth: int = typer.Option(None, "--nth"),
     exact: bool = typer.Option(False, "--exact"),
@@ -182,7 +192,8 @@ def text(
         out = client.text(
             tab=tab, wait_ms=wait_ms,
             **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex),
+                              within_css, nth, exact, regex,
+                              by_role=by_role, pierce_shadow=pierce_shadow),
         )
         sys.stdout.write(str(out)); sys.stdout.write("\n")
     except Exception as e:
@@ -197,6 +208,8 @@ def click(
     by_text: str = typer.Option(None, "--by-text"),
     by_label: str = typer.Option(None, "--by-label"),
     by_placeholder: str = typer.Option(None, "--by-placeholder"),
+    by_role: str = typer.Option(None, "--by-role"),
+    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
     within_css: str = typer.Option(None, "--within-css"),
     nth: int = typer.Option(None, "--nth"),
     exact: bool = typer.Option(False, "--exact"),
@@ -208,7 +221,8 @@ def click(
         out = client.click(
             tab=tab, wait_ms=wait_ms,
             **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex),
+                              within_css, nth, exact, regex,
+                              by_role=by_role, pierce_shadow=pierce_shadow),
         )
         console.print(f"[success]{out}[/success]")
     except Exception as e:
@@ -224,6 +238,8 @@ def type(
     by_text: str = typer.Option(None, "--by-text"),
     by_label: str = typer.Option(None, "--by-label"),
     by_placeholder: str = typer.Option(None, "--by-placeholder"),
+    by_role: str = typer.Option(None, "--by-role"),
+    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
     within_css: str = typer.Option(None, "--within-css"),
     nth: int = typer.Option(None, "--nth"),
     exact: bool = typer.Option(False, "--exact"),
@@ -236,7 +252,8 @@ def type(
         out = client.type(
             tab=tab, text=text, clear=clear, wait_ms=wait_ms,
             **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex),
+                              within_css, nth, exact, regex,
+                              by_role=by_role, pierce_shadow=pierce_shadow),
         )
         console.print(f"[success]{out}[/success]")
     except Exception as e:
@@ -252,6 +269,8 @@ def select(
     by_text: str = typer.Option(None, "--by-text"),
     by_label: str = typer.Option(None, "--by-label"),
     by_placeholder: str = typer.Option(None, "--by-placeholder"),
+    by_role: str = typer.Option(None, "--by-role"),
+    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
     within_css: str = typer.Option(None, "--within-css"),
     nth: int = typer.Option(None, "--nth"),
     exact: bool = typer.Option(False, "--exact"),
@@ -263,8 +282,30 @@ def select(
         out = client.select(
             tab=tab, value=value, wait_ms=wait_ms,
             **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex),
+                              within_css, nth, exact, regex,
+                              by_role=by_role, pierce_shadow=pierce_shadow),
         )
+        console.print(f"[success]{out}[/success]")
+    except Exception as e:
+        handle_client_error(e)
+
+
+@app.command()
+def mirror(
+    state: str = typer.Argument(..., help="on | off | status"),
+    tab: str = typer.Option(..., "--tab"),
+):
+    """Toggle per-tab console-log mirroring (off by default as of 0.5.0)."""
+    try:
+        if state == "on":
+            out = client.set_mirror(tab=tab, enabled=True)
+        elif state == "off":
+            out = client.set_mirror(tab=tab, enabled=False)
+        elif state == "status":
+            out = client.get_mirror(tab=tab)
+        else:
+            console.print("[error]state must be on | off | status[/error]")
+            raise typer.Exit(1)
         console.print(f"[success]{out}[/success]")
     except Exception as e:
         handle_client_error(e)
@@ -278,6 +319,8 @@ def scroll(
     by_text: str = typer.Option(None, "--by-text"),
     by_label: str = typer.Option(None, "--by-label"),
     by_placeholder: str = typer.Option(None, "--by-placeholder"),
+    by_role: str = typer.Option(None, "--by-role"),
+    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
     within_css: str = typer.Option(None, "--within-css"),
     nth: int = typer.Option(None, "--nth"),
     exact: bool = typer.Option(False, "--exact"),
@@ -291,7 +334,8 @@ def scroll(
         out = client.scroll(
             tab=tab, block=block, behavior=behavior, wait_ms=wait_ms,
             **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex),
+                              within_css, nth, exact, regex,
+                              by_role=by_role, pierce_shadow=pierce_shadow),
         )
         console.print(f"[success]{out}[/success]")
     except Exception as e:
@@ -306,6 +350,8 @@ def highlight(
     by_text: str = typer.Option(None, "--by-text"),
     by_label: str = typer.Option(None, "--by-label"),
     by_placeholder: str = typer.Option(None, "--by-placeholder"),
+    by_role: str = typer.Option(None, "--by-role"),
+    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
     within_css: str = typer.Option(None, "--within-css"),
     nth: int = typer.Option(None, "--nth"),
     exact: bool = typer.Option(False, "--exact"),
@@ -319,7 +365,8 @@ def highlight(
         out = client.highlight(
             tab=tab, color=color, duration_ms=duration_ms, wait_ms=wait_ms,
             **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex),
+                              within_css, nth, exact, regex,
+                              by_role=by_role, pierce_shadow=pierce_shadow),
         )
         console.print(f"[success]{out}[/success]")
     except Exception as e:
@@ -335,6 +382,8 @@ def press(
     by_text: str = typer.Option(None, "--by-text"),
     by_label: str = typer.Option(None, "--by-label"),
     by_placeholder: str = typer.Option(None, "--by-placeholder"),
+    by_role: str = typer.Option(None, "--by-role"),
+    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
     within_css: str = typer.Option(None, "--within-css"),
     nth: int = typer.Option(None, "--nth"),
     wait_ms: int = typer.Option(0, "--wait-ms"),
@@ -364,6 +413,8 @@ def screenshot(
     by_text: str = typer.Option(None, "--by-text"),
     by_label: str = typer.Option(None, "--by-label"),
     by_placeholder: str = typer.Option(None, "--by-placeholder"),
+    by_role: str = typer.Option(None, "--by-role"),
+    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
     within_css: str = typer.Option(None, "--within-css"),
     nth: int = typer.Option(None, "--nth"),
     full_page: bool = typer.Option(False, "--full-page"),

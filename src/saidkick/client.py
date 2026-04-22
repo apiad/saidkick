@@ -9,7 +9,8 @@ class SaidkickClient:
     @staticmethod
     def _locator_params(
         css=None, xpath=None, by_text=None, by_label=None, by_placeholder=None,
-        within_css=None, nth=None, exact=False, regex=False,
+        by_role=None, within_css=None, nth=None, exact=False, regex=False,
+        pierce_shadow=False,
     ) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
         if css is not None: out["css"] = css
@@ -17,10 +18,12 @@ class SaidkickClient:
         if by_text is not None: out["by_text"] = by_text
         if by_label is not None: out["by_label"] = by_label
         if by_placeholder is not None: out["by_placeholder"] = by_placeholder
+        if by_role is not None: out["by_role"] = by_role
         if within_css is not None: out["within_css"] = within_css
         if nth is not None: out["nth"] = nth
         if exact: out["exact"] = True
         if regex: out["regex"] = True
+        if pierce_shadow: out["pierce_shadow"] = True
         return out
 
     # ---- introspection ----
@@ -130,6 +133,17 @@ class SaidkickClient:
                   **self._locator_params(**locator)},
             timeout=wait_ms / 1000 + 10,
         )
+        r.raise_for_status()
+        return r.json()
+
+    def set_mirror(self, tab: str, enabled: bool) -> Dict[str, Any]:
+        r = httpx.post(f"{self.base_url}/mirror",
+                       json={"tab": tab, "enabled": enabled})
+        r.raise_for_status()
+        return r.json()
+
+    def get_mirror(self, tab: str) -> Dict[str, Any]:
+        r = httpx.get(f"{self.base_url}/mirror", params={"tab": tab})
         r.raise_for_status()
         return r.json()
 

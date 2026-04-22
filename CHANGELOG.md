@@ -4,6 +4,26 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-21
+
+### BREAKING CHANGES
+
+- **Console mirroring is opt-in per tab.** `saidkick mirror on --tab TAB` activates; `saidkick mirror off --tab TAB` deactivates; `saidkick mirror status --tab TAB` queries. Previously every page's console.log was auto-mirrored to the server. Callers relying on auto-mirrored logs must now opt in per tab. Main-world still wraps `console.*` so the instrumentation overhead is unchanged — only the server-side forwarding is gated.
+
+### Features
+
+- **`--by-role` locator** — resolves via CDP `Accessibility.getFullAXTree`. Pair with `--by-text` to disambiguate ("the button named Send"). Background.js translates the AXTree match into a unique CSS selector via `DOM.resolveNode` + `Runtime.callFunctionOn`, then forwards to the content script via the existing CSS-locator path.
+- **`--pierce-shadow` locator flag** — when set, text/label/placeholder scans walk into open shadow roots (default off for perf + back-compat). CSS selectors run separately on each shadow root when pierce is enabled.
+
+### Fixes
+
+- **Highlight prev-style preserved on back-to-back calls.** A `WeakMap<Element, {prev, activeCount}>` captures the original outline/box-shadow/transition on the first highlight of an element; subsequent highlights reuse it and refcount. Only the last-expiring timeout restores, so the element actually returns to its original state instead of stuck-red.
+- **`ensureDebuggerAttached` propagates `Page.enable` / `Runtime.enable` errors.** Previously swallowed via an unused callback; now rejects the promise so navigation / execute commands surface the failure instead of hanging.
+
+### Internal
+
+- `Locator` mixin gains `by_role` and `pierce_shadow`. Client `_locator_params` and CLI `_locator_kwargs` forward them. All selector-using REST endpoints carry them through to the extension payload unchanged.
+
 ## [0.4.5] - 2026-04-21
 
 ### Fixes

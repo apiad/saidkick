@@ -15,14 +15,26 @@
         });
     } catch (e) {}
 
+    // Console mirroring is OPT-IN per tab as of 0.5.0 — main_world.js still
+    // wraps console.log, but we only forward the postMessages to background
+    // (and thence to the server) when this tab is explicitly mirrored.
+    // Background toggles this via a SET_MIRROR message.
+    let mirroring = false;
+
     window.addEventListener('message', (event) => {
         if (event.source !== window) return;
         const msg = event.data;
         if (msg && msg.type === 'saidkick-log') {
+            if (!mirroring) return;
             try { chrome.runtime.sendMessage({ type: "log", ...msg.detail }); }
             catch (e) {}
         }
     });
+
+    // Tracks active HIGHLIGHT state per element: {prev, activeCount}. A
+    // WeakMap lets the GC reclaim state if the element is removed from the
+    // DOM before its highlight expires.
+    const highlightState = new WeakMap();
 
     function resolveRoot(locator) {
         if (!locator.within_css) return document;
@@ -74,12 +86,39 @@
         return el => test(getText(el));
     }
 
+    // Walk every element under `root`, optionally descending into shadow roots.
+    function* walkDeep(root, pierce) {
+        if (root.nodeType === 1) yield root;
+        if (root.querySelectorAll) {
+            for (const el of root.querySelectorAll("*")) {
+                yield el;
+                if (pierce && el.shadowRoot) {
+                    for (const inner of walkDeep(el.shadowRoot, pierce)) yield inner;
+                }
+            }
+        }
+    }
+
     function collectLocator(locator) {
         const root = resolveRoot(locator);
+        const pierce = Boolean(locator.pierce_shadow);
         let matches;
         if (locator.css) {
-            matches = Array.from(root.querySelectorAll(locator.css));
+            if (pierce) {
+                // CSS selectors don't natively pierce shadow — run the query on
+                // each shadow root separately.
+                matches = [];
+                matches.push(...root.querySelectorAll(locator.css));
+                for (const el of walkDeep(root, true)) {
+                    if (el.shadowRoot) {
+                        matches.push(...el.shadowRoot.querySelectorAll(locator.css));
+                    }
+                }
+            } else {
+                matches = Array.from(root.querySelectorAll(locator.css));
+            }
         } else if (locator.xpath) {
+            // XPath doesn't meaningfully pierce either; just run at document-root.
             const result = document.evaluate(
                 locator.xpath, root, null,
                 XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
@@ -91,7 +130,10 @@
         } else {
             const pred = matchesPredicate(locator);
             if (!pred) throw new Error("No selector provided");
-            matches = Array.from(root.querySelectorAll("*")).filter(pred);
+            const all = pierce
+                ? Array.from(walkDeep(root, true))
+                : Array.from(root.querySelectorAll("*"));
+            matches = all.filter(pred);
         }
         if (locator.nth != null) {
             const el = matches[locator.nth];
@@ -269,6 +311,15 @@
                 return { success: true, payload: out };
             }
 
+            if (type === "SET_MIRROR") {
+                mirroring = Boolean(payload && payload.enabled);
+                return { success: true, payload: { mirroring } };
+            }
+
+            if (type === "GET_MIRROR") {
+                return { success: true, payload: { mirroring } };
+            }
+
             if (type === "FOCUS") {
                 const el = await waitForLocator(payload, waitMs);
                 el.focus();
@@ -308,23 +359,39 @@
                 const el = await waitForLocator(payload, waitMs);
                 const color = payload.color || "#ff3b30";
                 const duration = typeof payload.duration_ms === "number" ? payload.duration_ms : 2000;
-                // Use outline (no layout shift) + offset so the ring stands off the element.
-                const prev = {
-                    outline: el.style.outline,
-                    outlineOffset: el.style.outlineOffset,
-                    boxShadow: el.style.boxShadow,
-                    transition: el.style.transition,
-                };
+                // Back-to-back highlights on the same element previously polluted
+                // `prev` — the second call captured the red outline as "original."
+                // Now: prev is captured on the FIRST highlight of an element and
+                // kept in a WeakMap; subsequent highlights reuse it. A refcount
+                // ensures we only restore when the LAST active highlight expires.
+                let entry = highlightState.get(el);
+                if (!entry) {
+                    entry = {
+                        prev: {
+                            outline: el.style.outline,
+                            outlineOffset: el.style.outlineOffset,
+                            boxShadow: el.style.boxShadow,
+                            transition: el.style.transition,
+                        },
+                        activeCount: 0,
+                    };
+                    highlightState.set(el, entry);
+                }
+                entry.activeCount += 1;
                 el.style.outline = `3px solid ${color}`;
                 el.style.outlineOffset = "3px";
-                el.style.boxShadow = `0 0 0 6px ${color}33`;  // soft halo
+                el.style.boxShadow = `0 0 0 6px ${color}33`;
                 el.style.transition = "outline 120ms ease, box-shadow 120ms ease";
                 if (duration > 0) {
                     setTimeout(() => {
-                        el.style.outline = prev.outline;
-                        el.style.outlineOffset = prev.outlineOffset;
-                        el.style.boxShadow = prev.boxShadow;
-                        el.style.transition = prev.transition;
+                        entry.activeCount -= 1;
+                        if (entry.activeCount <= 0) {
+                            el.style.outline = entry.prev.outline;
+                            el.style.outlineOffset = entry.prev.outlineOffset;
+                            el.style.boxShadow = entry.prev.boxShadow;
+                            el.style.transition = entry.prev.transition;
+                            highlightState.delete(el);
+                        }
                     }, duration);
                 }
                 const rect = el.getBoundingClientRect();

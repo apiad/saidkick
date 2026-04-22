@@ -40,7 +40,7 @@ def test_dom_anchoring_params():
             "tab_id": 3, "wait_ms": 0, "all": True,
             "css": ".test", "xpath": None,
             "by_text": None, "by_label": None, "by_placeholder": None,
-            "within_css": None, "nth": None, "exact": False, "regex": False,
+            "by_role": None, "within_css": None, "nth": None, "exact": False, "regex": False, "pierce_shadow": False,
         },
         timeout=10.0,
     )
@@ -61,7 +61,7 @@ def test_interaction_endpoints():
                 "tab_id": 1, "wait_ms": 0,
                 "css": "#btn", "xpath": None,
                 "by_text": None, "by_label": None, "by_placeholder": None,
-                "within_css": None, "nth": None, "exact": False, "regex": False,
+                "by_role": None, "within_css": None, "nth": None, "exact": False, "regex": False, "pierce_shadow": False,
             },
             timeout=10.0,
         )
@@ -77,7 +77,7 @@ def test_interaction_endpoints():
                 "text": "hello", "clear": True,
                 "css": "#input", "xpath": None,
                 "by_text": None, "by_label": None, "by_placeholder": None,
-                "within_css": None, "nth": None, "exact": False, "regex": False,
+                "by_role": None, "within_css": None, "nth": None, "exact": False, "regex": False, "pierce_shadow": False,
             },
             timeout=10.0,
         )
@@ -92,7 +92,7 @@ def test_interaction_endpoints():
                 "tab_id": 3, "wait_ms": 0, "value": "opt1",
                 "css": None, "xpath": "//select",
                 "by_text": None, "by_label": None, "by_placeholder": None,
-                "within_css": None, "nth": None, "exact": False, "regex": False,
+                "by_role": None, "within_css": None, "nth": None, "exact": False, "regex": False, "pierce_shadow": False,
             },
             timeout=10.0,
         )
