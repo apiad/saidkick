@@ -524,6 +524,7 @@ async def get_screenshot(
     exact: bool = False,
     regex: bool = False,
     full_page: bool = False,
+    max_height_px: int = 10000,
 ):
     browser_id, tab_id = _parse_or_400(tab)
     loc = Locator(
@@ -536,6 +537,7 @@ async def get_screenshot(
         browser_id, "SCREENSHOT",
         payload={
             "tab_id": tab_id, "full_page": full_page,
+            "max_height_px": max_height_px,
             **_locator_payload(loc),
         },
         timeout=_command_timeout(timeout_ms=15000),

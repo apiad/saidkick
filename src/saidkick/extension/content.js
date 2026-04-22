@@ -188,6 +188,10 @@
             parts.unshift(part);
             el = parent;
         }
+        // Fallback: ancestor walk didn't produce a body-rooted path (e.g. the
+        // element itself IS document.body or lives outside it). Return just
+        // the tag name so we don't emit an invalid "body > " string.
+        if (parts.length === 0) return (el && el.tagName ? el.tagName.toLowerCase() : "");
         return "body > " + parts.join(" > ");
     }
 

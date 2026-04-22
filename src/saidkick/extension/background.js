@@ -3,6 +3,7 @@ let browserId = null;
 let previousBrowserId = null;  // for "reconnected as new br-XXXX" popup hint
 const SERVER_URL = "ws://localhost:6992/ws";
 const logQueue = [];
+const LOG_QUEUE_MAX = 500;  // drop-oldest beyond this to bound SW memory
 const attachedTabs = new Set();  // tabIds we've attached the debugger to
 let keepaliveInterval = null;
 const KEEPALIVE_MS = 20_000;  // inside MV3's 30s SW idle window
@@ -538,7 +539,22 @@ function connect() {
                 }
                 const cdpParams = { format: "png" };
                 if (clip) cdpParams.clip = clip;
-                if (payload.full_page) cdpParams.captureBeyondViewport = true;
+                if (payload.full_page) {
+                    cdpParams.captureBeyondViewport = true;
+                    // If the user set a max_height_px cap, apply it as a clip
+                    // starting from y=0 so we don't spew multi-megabyte PNGs.
+                    const cap = payload.max_height_px || 10000;
+                    if (!clip) {
+                        cdpParams.clip = {
+                            x: 0, y: 0,
+                            width: document.documentElement?.scrollWidth || 1920,
+                            height: Math.min(
+                                document.documentElement?.scrollHeight || cap, cap
+                            ),
+                            scale: 1,
+                        };
+                    }
+                }
                 const shot = await new Promise((resolve, reject) => {
                     chrome.debugger.sendCommand(
                         { tabId: tab.id }, "Page.captureScreenshot", cdpParams,
@@ -655,6 +671,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             socket.send(JSON.stringify(message));
         } else {
             logQueue.push(message);
+            while (logQueue.length > LOG_QUEUE_MAX) logQueue.shift();
         }
         return;
     }

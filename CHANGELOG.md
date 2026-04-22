@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-04-21
+
+### Fixes
+
+- **`--full-page` screenshots now cap at 10,000 pixels of height by default.** Override via `--max-height-px N`. Prevents accidentally 30MB+ PNGs on infinite-scroll pages. Locator-clipped screenshots are unaffected (they already clip to the element).
+- **`logQueue` bounded at 500 entries.** Drops oldest-first when over. Prevents SW memory growth when the server is down for a long time.
+- **`uniqueSelector` fallback** for edge cases where the ancestor walk produces an empty parts array (e.g. element IS `document.body` or lives outside it). Now returns just the tag name instead of the invalid `"body > "`.
+
+### Internal
+
+- Popup status poll: 1500ms → 500ms for snappier feedback while open.
+
 ## [0.5.0] - 2026-04-21
 
 ### BREAKING CHANGES

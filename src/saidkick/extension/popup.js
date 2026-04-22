@@ -58,6 +58,7 @@ reconnectBtn.addEventListener("click", async () => {
 });
 
 refresh();
-// Light polling while the popup is open.
-const poll = setInterval(refresh, 1500);
+// Light polling while the popup is open — 500ms feels responsive and
+// the popup dies immediately on close so cost is bounded.
+const poll = setInterval(refresh, 500);
 window.addEventListener("unload", () => clearInterval(poll));
