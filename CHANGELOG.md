@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-04-21
+
+### Internal
+
+- Release workflow switched to PyPI Trusted Publishing (OIDC). No longer relies on a `PYPI_TOKEN` repo secret — uses the `pypi` environment and `id-token: write` permission to authenticate against PyPI via GitHub's OIDC provider. v0.4.1 tagged but publish-pypi failed due to missing secret; v0.4.2 is the first tag to actually reach PyPI.
+
 ## [0.4.1] - 2026-04-21
 
 ### Fixes
