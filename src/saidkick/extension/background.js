@@ -1,13 +1,18 @@
-let socket = null;
 let browserId = null;
 let previousBrowserId = null;  // for "reconnected as new br-XXXX" popup hint
-const SERVER_URL = "ws://localhost:6992/ws";
-const logQueue = [];
-const LOG_QUEUE_MAX = 500;  // drop-oldest beyond this to bound SW memory
 const attachedTabs = new Set();  // tabIds we've attached the debugger to
-let keepaliveInterval = null;
-const KEEPALIVE_MS = 20_000;  // inside MV3's 30s SW idle window
 const RECONNECT_ALARM = "saidkick-reconnect-watchdog";
+const OFFSCREEN_URL = "offscreen.html";
+
+async function ensureOffscreen() {
+    const has = await chrome.offscreen.hasDocument();
+    if (has) return;
+    await chrome.offscreen.createDocument({
+        url: OFFSCREEN_URL,
+        reasons: ["WORKERS"],
+        justification: "Persistent WebSocket to localhost saidkick server outlives SW idle.",
+    });
+}
 
 async function ensureDebuggerAttached(tabId) {
     const target = { tabId };
@@ -473,51 +478,33 @@ async function dispatchCommand(message, respond) {
     }
 }
 
-function connect() {
-    socket = new WebSocket(SERVER_URL);
+// Cached connection status pushed by offscreen via the Port. The popup
+// reads this from SW (via chrome.runtime.sendMessage GET_STATUS); SW
+// returns the cache so popup open is instant.
+let cachedStatus = { connected: false, connecting: false };
 
-    socket.onopen = () => {
-        const logMsg = {
-            type: "log",
-            level: "log",
-            data: "Saidkick: Background script connected to server",
-            timestamp: new Date().toISOString(),
-            url: "background"
-        };
-        socket.send(JSON.stringify(logMsg));
-        console.log(logMsg.data);
+let activePort = null;
 
-        // Send queued logs (bounded — 0.5.1 further caps the queue)
-        while (logQueue.length > 0) {
-            socket.send(JSON.stringify(logQueue.shift()));
-        }
+chrome.runtime.onConnect.addListener((p) => {
+    if (p.name !== "saidkick-cmd") return;
+    activePort = p;
+    p.onMessage.addListener(async (msg) => {
+        if (!msg || typeof msg !== "object") return;
 
-        // Keepalive: active WS traffic within the 30s MV3 idle window keeps
-        // the service worker awake. Send PING every 20s; server replies PONG.
-        if (keepaliveInterval) clearInterval(keepaliveInterval);
-        keepaliveInterval = setInterval(() => {
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                try { socket.send(JSON.stringify({ type: "PING" })); }
-                catch (_) { /* racing close — next tick will reconnect */ }
-            }
-        }, KEEPALIVE_MS);
-    };
-
-    socket.onmessage = async (event) => {
-        if (typeof event.data !== "string") return;
-        let message;
-        try {
-            message = JSON.parse(event.data);
-        } catch (e) {
-            console.warn("Saidkick: malformed WS frame, ignoring:", e.message);
+        // Status push from offscreen: cache and short-circuit.
+        if (msg.type === "STATUS") {
+            cachedStatus = {
+                connected: !!msg.connected,
+                connecting: !!msg.connecting,
+            };
             return;
         }
-        const { type, id } = message;
 
-        // Protocol-level frames stay here — they're WS-specific, not commands.
-        if (type === "HELLO") {
+        // HELLO from server (forwarded by offscreen). Cache the browser_id
+        // for popup display and "reconnected as new br-XXXX" hint.
+        if (msg.type === "HELLO") {
             previousBrowserId = browserId;
-            browserId = message.browser_id;
+            browserId = msg.browser_id;
             if (previousBrowserId && previousBrowserId !== browserId) {
                 console.log(`Saidkick: reconnected as ${browserId} (was ${previousBrowserId})`);
             } else {
@@ -525,89 +512,72 @@ function connect() {
             }
             return;
         }
-        if (type === "PONG") return;
 
-        // All command frames flow through dispatchCommand. The respond
-        // callback is responsible for writing the RESPONSE envelope.
+        // All other frames are commands. Dispatch via the existing
+        // dispatchCommand function from Task 1; the respond callback
+        // sends RESPONSE frames back through the Port (which offscreen
+        // forwards to the WS).
         const respond = (success, payload) => {
-            if (!socket || socket.readyState !== WebSocket.OPEN) {
-                console.warn("Saidkick: dropping response for", id, "— socket not open");
-                return;
-            }
             try {
-                socket.send(JSON.stringify({ type: "RESPONSE", id, success, payload }));
-            } catch (err) {
-                console.warn("Saidkick: socket.send threw for", id, ":", err);
+                p.postMessage({ type: "RESPONSE", id: msg.id, success, payload });
+            } catch (e) {
+                console.warn("Saidkick SW: port.postMessage failed:", e);
             }
         };
-        await dispatchCommand(message, respond);
-    };
-
-    socket.onclose = () => {
-        console.log("Saidkick: Connection closed, retrying in 5s...");
-        if (keepaliveInterval) { clearInterval(keepaliveInterval); keepaliveInterval = null; }
-        setTimeout(connect, 5000);
-    };
-
-    socket.onerror = (error) => {
-        console.error("Saidkick: WebSocket error", error);
-    };
-}
-
-// Belt-and-braces reconnection watchdog: even with keepalive, if the SW is
-// killed (e.g. extension reload, chrome restart, crash) the setTimeout chain
-// dies with it. chrome.alarms survives SW death and fires to wake us; we
-// reconcile by reconnecting if the socket isn't OPEN.
-chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name !== RECONNECT_ALARM) return;
-    if (!socket || socket.readyState === WebSocket.CLOSED) {
-        console.log("Saidkick: alarm watchdog reconnecting");
-        connect();
-    }
+        await dispatchCommand(msg, respond);
+    });
+    p.onDisconnect.addListener(() => {
+        if (activePort === p) activePort = null;
+    });
 });
 
-function getStatus() {
-    const state = socket ? socket.readyState : WebSocket.CLOSED;
-    return {
-        connected: state === WebSocket.OPEN,
-        connecting: state === WebSocket.CONNECTING,
-        browserId: browserId,
-        previousBrowserId: (previousBrowserId && previousBrowserId !== browserId) ? previousBrowserId : null,
-        serverUrl: SERVER_URL,
-    };
-}
-
-function forceReconnect() {
-    browserId = null;
-    if (socket) {
-        try {
-            socket.close();
-        } catch (_) { /* ignore */ }
-    }
-    // socket.onclose will auto-retry in 5s; trigger immediately instead.
-    setTimeout(connect, 50);
-}
-
+// Popup status query — answer from cache so opening the popup is instant.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === "log") {
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify(message));
-        } else {
-            logQueue.push(message);
-            while (logQueue.length > LOG_QUEUE_MAX) logQueue.shift();
-        }
+    if (message?.type === "GET_STATUS") {
+        sendResponse({
+            connected: cachedStatus.connected,
+            connecting: cachedStatus.connecting,
+            browserId,
+            previousBrowserId: (previousBrowserId && previousBrowserId !== browserId) ? previousBrowserId : null,
+            serverUrl: "ws://localhost:6992/ws",
+        });
         return;
     }
-    if (message.type === "GET_STATUS") {
-        sendResponse(getStatus());
-        return;
-    }
-    if (message.type === "RECONNECT") {
+    if (message?.type === "RECONNECT") {
+        // Force a fresh offscreen → fresh WS → fresh browser_id.
         forceReconnect();
         sendResponse({ ok: true });
         return;
     }
+    if (message?.type === "log") {
+        // SW-originated log frame — forward to offscreen so it can ride
+        // the WS (or be queued if WS is reconnecting).
+        if (activePort) {
+            try { activePort.postMessage(message); } catch (_) { /* drop */ }
+        }
+        return;
+    }
 });
 
-connect();
+async function forceReconnect() {
+    browserId = null;
+    if (await chrome.offscreen.hasDocument()) {
+        try { await chrome.offscreen.closeDocument(); } catch (_) { /* ignore */ }
+    }
+    await ensureOffscreen();
+}
+
+// Belt-and-braces: alarms survive SW death and let us recreate the
+// offscreen document if it was evicted (rare, but possible under
+// memory pressure or Chrome version-specific quirks).
+chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm.name !== RECONNECT_ALARM) return;
+    await ensureOffscreen();
+});
+
+// Boot the offscreen document at SW spawn (extension load, Chrome
+// restart, SW respawn after death).
+ensureOffscreen().catch((err) => {
+    console.error("Saidkick: ensureOffscreen failed:", err);
+});
