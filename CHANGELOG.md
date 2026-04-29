@@ -4,6 +4,24 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-29
+
+### Changed
+
+- **Extension: WebSocket moved to an offscreen document.** The persistent WS to the saidkick server now lives in a Chrome offscreen page (`chrome.offscreen` API) instead of the MV3 service worker. The SW becomes a thin command executor reachable via a long-lived `chrome.runtime.connect()` Port named `"saidkick-cmd"`.
+
+  This closes the SW-idle race that 0.4.5's PING/PONG keepalive could not fully close: in practice, after ~30 seconds of CLI inactivity the SW would die mid-keepalive and `saidkick tabs` would return `[]` for up to 30 seconds (the alarm-watchdog window) before the next reconnect. Offscreen documents are not subject to the SW idle timer, so `browser_id` is now stable across SW deaths and idle windows.
+
+  No CLI changes. Server protocol unchanged. Existing 114 pytest tests pass.
+
+  Manual smoke: load extension → `saidkick tabs` returns within 1s → wait 5 minutes idle → `saidkick tabs` returns within 1s and yields the same `br-XXXX`. Kill the saidkick server and restart it → within ~5s a new `br-XXXX` is minted and commands work.
+
+### Migration notes
+
+- Manifest version bumped from `1.2` to `1.3`. Reload the extension on `chrome://extensions/` after upgrading the package.
+- New permission: `"offscreen"`. Chrome will surface a permission warning on extension reload — expected.
+- Behavior change for tools observing reconnect events: 0.4.5's popup hint "reconnected as new br-XXXX" will fire less often (only on real WS reconnects: server restart, network blip, manual Reconnect click).
+
 ## [0.5.1] - 2026-04-21
 
 ### Fixes
