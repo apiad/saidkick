@@ -233,14 +233,12 @@ async function dispatchKey(tabId, key, modifiers) {
 // script yet. sendToContentScript attempts sendMessage; on the classic
 // "Receiving end does not exist" error it injects content.js (and main_world.js
 // for console mirroring) via chrome.scripting, then retries once.
-function sendToContentScript(tabId, msg, requestId, retried = false) {
+function sendToContentScript(tabId, msg, respond, retried = false) {
     let settled = false;
     const reply = (success, payload) => {
         if (settled) return;
         settled = true;
-        socket.send(JSON.stringify({
-            type: "RESPONSE", id: requestId, success, payload,
-        }));
+        respond(success, payload);
     };
 
     try {
@@ -268,7 +266,7 @@ function sendToContentScript(tabId, msg, requestId, retried = false) {
                                 if (chrome.runtime.lastError) {
                                     console.warn("Saidkick: main_world inject:", chrome.runtime.lastError.message);
                                 }
-                                sendToContentScript(tabId, msg, requestId, true);
+                                sendToContentScript(tabId, msg, respond, true);
                             }
                         );
                     }
@@ -286,18 +284,192 @@ function sendToContentScript(tabId, msg, requestId, retried = false) {
     }
 }
 
-// Guarded send helper — checks socket state before every outbound frame so
-// a racing socket-close doesn't throw synchronously in the middle of a
-// response dispatch.
-function sendResponse(id, success, payload) {
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-        console.warn("Saidkick: dropping response for", id, "— socket not open");
-        return;
-    }
+async function dispatchCommand(message, respond) {
+    const { type, id, payload } = message;
     try {
-        socket.send(JSON.stringify({ type: "RESPONSE", id, success, payload }));
+        if (type === "LIST_TABS") {
+            try {
+                const rawTabs = await chrome.tabs.query({});
+                const tabs = rawTabs
+                    .filter(t => t.url && !t.url.startsWith("chrome://")
+                        && !t.url.startsWith("chrome-extension://")
+                        && !t.url.startsWith("devtools://"))
+                    .map(t => ({
+                        id: t.id, url: t.url, title: t.title,
+                        active: t.active, windowId: t.windowId,
+                    }));
+                respond(true, tabs);
+            } catch (err) {
+                respond(false, err.toString());
+            }
+            return;
+        }
+
+        if (type === "OPEN") {
+            const { url, wait: waitMode, timeout_ms, activate } = payload || {};
+            try {
+                const needWait = waitMode && waitMode !== "none";
+                const initialUrl = needWait ? "about:blank" : url;
+                const created = await chrome.tabs.create({
+                    url: initialUrl, active: Boolean(activate),
+                });
+                const newTabId = created.id;
+                if (needWait) {
+                    await ensureDebuggerAttached(newTabId);
+                    const ev = PAGE_EVENT_FOR_WAIT[waitMode];
+                    if (!ev) throw new Error(`invalid wait mode: ${waitMode}`);
+                    const waitPromise = waitForPageEvent(newTabId, ev, timeout_ms || 15000);
+                    await chrome.tabs.update(newTabId, { url });
+                    await waitPromise;
+                }
+                const finalTab = await chrome.tabs.get(newTabId);
+                respond(true, { tab_id: newTabId, url: finalTab.url });
+            } catch (err) {
+                respond(false, `tab create failed: ${err.message || err}`);
+            }
+            return;
+        }
+
+        const tabId = payload?.tab_id;
+        if (typeof tabId !== "number") {
+            respond(false, "tab_id required");
+            return;
+        }
+
+        if (type === "NAVIGATE") {
+            const { url, wait: waitMode, timeout_ms } = payload || {};
+            try {
+                const needWait = waitMode && waitMode !== "none";
+                if (needWait) {
+                    await ensureDebuggerAttached(tabId);
+                    const ev = PAGE_EVENT_FOR_WAIT[waitMode];
+                    if (!ev) throw new Error(`invalid wait mode: ${waitMode}`);
+                    const waitPromise = waitForPageEvent(tabId, ev, timeout_ms || 15000);
+                    await chrome.tabs.update(tabId, { url });
+                    await waitPromise;
+                } else {
+                    await chrome.tabs.update(tabId, { url });
+                }
+                const finalTab = await chrome.tabs.get(tabId);
+                respond(true, { url: finalTab.url });
+            } catch (err) {
+                respond(false, err.message || String(err));
+            }
+            return;
+        }
+
+        let tab;
+        try {
+            tab = await chrome.tabs.get(tabId);
+        } catch (err) {
+            respond(false, `tab not found: ${tabId}`);
+            return;
+        }
+
+        if (["GET_DOM", "CLICK", "TYPE", "SELECT", "GET_TEXT", "FIND", "SCROLL", "HIGHLIGHT",
+             "SET_MIRROR", "GET_MIRROR"].includes(type)) {
+            let forwardPayload = payload;
+            if (payload && payload.by_role) {
+                try {
+                    const selector = await resolveByRole(tab.id, payload);
+                    forwardPayload = { ...payload, css: selector, by_role: null, by_text: null };
+                } catch (err) {
+                    respond(false, err.message || String(err));
+                    return;
+                }
+            }
+            sendToContentScript(tab.id, { type, payload: forwardPayload }, respond);
+        } else if (type === "PRESS") {
+            try {
+                await ensureDebuggerAttached(tab.id);
+                const hasLocator = payload.css || payload.xpath || payload.by_text
+                    || payload.by_label || payload.by_placeholder;
+                if (hasLocator) {
+                    const resp = await new Promise(resolve => {
+                        chrome.tabs.sendMessage(tab.id, { type: "FOCUS", payload }, resolve);
+                    });
+                    if (!resp || !resp.success) {
+                        respond(false, resp?.payload || "focus failed");
+                        return;
+                    }
+                }
+                await dispatchKey(tab.id, payload.key, payload.modifiers || []);
+                respond(true, { pressed: payload.key });
+            } catch (err) {
+                respond(false, err.message || String(err));
+            }
+        } else if (type === "SCREENSHOT") {
+            try {
+                await ensureDebuggerAttached(tab.id);
+                let clip = null;
+                const hasLocator = payload.css || payload.xpath || payload.by_text
+                    || payload.by_label || payload.by_placeholder;
+                if (hasLocator) {
+                    const resp = await new Promise(resolve => {
+                        chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_RECT", payload }, resolve);
+                    });
+                    if (!resp || !resp.success) {
+                        respond(false, resp?.payload || "resolve rect failed");
+                        return;
+                    }
+                    const r = resp.payload;
+                    clip = { x: r.x, y: r.y, width: r.width, height: r.height, scale: 1 };
+                }
+                const cdpParams = { format: "png" };
+                if (clip) cdpParams.clip = clip;
+                if (payload.full_page) {
+                    cdpParams.captureBeyondViewport = true;
+                    const cap = payload.max_height_px || 10000;
+                    if (!clip) {
+                        cdpParams.clip = {
+                            x: 0, y: 0,
+                            width: document.documentElement?.scrollWidth || 1920,
+                            height: Math.min(
+                                document.documentElement?.scrollHeight || cap, cap
+                            ),
+                            scale: 1,
+                        };
+                    }
+                }
+                const shot = await new Promise((resolve, reject) => {
+                    chrome.debugger.sendCommand(
+                        { tabId: tab.id }, "Page.captureScreenshot", cdpParams,
+                        (result) => chrome.runtime.lastError
+                            ? reject(chrome.runtime.lastError) : resolve(result),
+                    );
+                });
+                respond(true, {
+                    png_base64: shot.data,
+                    width: clip ? clip.width : 0,
+                    height: clip ? clip.height : 0,
+                });
+            } catch (err) {
+                respond(false, err.message || String(err));
+            }
+        } else if (type === "EXECUTE") {
+            try {
+                await ensureDebuggerAttached(tab.id);
+                const debugTarget = { tabId: tab.id };
+                const wrappedCode = `(async () => {\n${payload.code}\n})()`;
+                chrome.debugger.sendCommand(
+                    debugTarget, "Runtime.evaluate",
+                    { expression: wrappedCode, returnByValue: true, awaitPromise: true },
+                    (result) => {
+                        if (chrome.runtime.lastError) {
+                            respond(false, chrome.runtime.lastError.message);
+                        } else if (result.exceptionDetails) {
+                            respond(false, result.exceptionDetails.exception.description);
+                        } else {
+                            respond(true, result.result.value);
+                        }
+                    }
+                );
+            } catch (error) {
+                respond(false, error.message || String(error));
+            }
+        }
     } catch (err) {
-        console.warn("Saidkick: socket.send threw for", id, ":", err);
+        respond(false, `extension uncaught: ${err.message || err}`);
     }
 }
 
@@ -332,10 +504,7 @@ function connect() {
     };
 
     socket.onmessage = async (event) => {
-        // Binary frames should not occur with our server, but guard so we
-        // don't JSON.parse a Blob.
         if (typeof event.data !== "string") return;
-
         let message;
         try {
             message = JSON.parse(event.data);
@@ -343,10 +512,9 @@ function connect() {
             console.warn("Saidkick: malformed WS frame, ignoring:", e.message);
             return;
         }
+        const { type, id } = message;
 
-        const { type, id, payload } = message;
-
-        try {
+        // Protocol-level frames stay here — they're WS-specific, not commands.
         if (type === "HELLO") {
             previousBrowserId = browserId;
             browserId = message.browser_id;
@@ -357,266 +525,22 @@ function connect() {
             }
             return;
         }
+        if (type === "PONG") return;
 
-        if (type === "PONG") {
-            // Keepalive ack — just swallow it.
-            return;
-        }
-
-        if (type === "LIST_TABS") {
+        // All command frames flow through dispatchCommand. The respond
+        // callback is responsible for writing the RESPONSE envelope.
+        const respond = (success, payload) => {
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                console.warn("Saidkick: dropping response for", id, "— socket not open");
+                return;
+            }
             try {
-                const rawTabs = await chrome.tabs.query({});
-                const tabs = rawTabs
-                    .filter(t => t.url && !t.url.startsWith("chrome://")
-                        && !t.url.startsWith("chrome-extension://")
-                        && !t.url.startsWith("devtools://"))
-                    .map(t => ({
-                        id: t.id,
-                        url: t.url,
-                        title: t.title,
-                        active: t.active,
-                        windowId: t.windowId,
-                    }));
-                socket.send(JSON.stringify({
-                    type: "RESPONSE", id, success: true, payload: tabs,
-                }));
+                socket.send(JSON.stringify({ type: "RESPONSE", id, success, payload }));
             } catch (err) {
-                socket.send(JSON.stringify({
-                    type: "RESPONSE", id, success: false, payload: err.toString(),
-                }));
+                console.warn("Saidkick: socket.send threw for", id, ":", err);
             }
-            return;
-        }
-
-        if (type === "OPEN") {
-            const { url, wait: waitMode, timeout_ms, activate } = payload || {};
-            try {
-                // If we need to wait for a load event, open a blank tab first so we
-                // can attach the debugger + subscribe to Page events BEFORE the
-                // navigation to the real URL starts. Otherwise we race the event.
-                const needWait = waitMode && waitMode !== "none";
-                const initialUrl = needWait ? "about:blank" : url;
-                const created = await chrome.tabs.create({
-                    url: initialUrl, active: Boolean(activate),
-                });
-                const newTabId = created.id;
-                if (needWait) {
-                    await ensureDebuggerAttached(newTabId);
-                    const ev = PAGE_EVENT_FOR_WAIT[waitMode];
-                    if (!ev) throw new Error(`invalid wait mode: ${waitMode}`);
-                    // Kick off the real navigation; our listener is already armed.
-                    const waitPromise = waitForPageEvent(newTabId, ev, timeout_ms || 15000);
-                    await chrome.tabs.update(newTabId, { url });
-                    await waitPromise;
-                }
-                const finalTab = await chrome.tabs.get(newTabId);
-                socket.send(JSON.stringify({
-                    type: "RESPONSE", id, success: true,
-                    payload: { tab_id: newTabId, url: finalTab.url },
-                }));
-            } catch (err) {
-                socket.send(JSON.stringify({
-                    type: "RESPONSE", id, success: false,
-                    payload: `tab create failed: ${err.message || err}`,
-                }));
-            }
-            return;
-        }
-
-        // All remaining commands target a specific tab_id supplied in payload.
-        const tabId = payload?.tab_id;
-        if (typeof tabId !== "number") {
-            socket.send(JSON.stringify({
-                type: "RESPONSE", id, success: false, payload: "tab_id required",
-            }));
-            return;
-        }
-
-        if (type === "NAVIGATE") {
-            const { url, wait: waitMode, timeout_ms } = payload || {};
-            try {
-                const needWait = waitMode && waitMode !== "none";
-                if (needWait) {
-                    await ensureDebuggerAttached(tabId);
-                    const ev = PAGE_EVENT_FOR_WAIT[waitMode];
-                    if (!ev) throw new Error(`invalid wait mode: ${waitMode}`);
-                    // Arm the listener BEFORE firing the navigation to avoid a race
-                    // where the page loads fast enough that Page.domContentLoaded
-                    // fires before our listener is registered.
-                    const waitPromise = waitForPageEvent(tabId, ev, timeout_ms || 15000);
-                    await chrome.tabs.update(tabId, { url });
-                    await waitPromise;
-                } else {
-                    await chrome.tabs.update(tabId, { url });
-                }
-                const finalTab = await chrome.tabs.get(tabId);
-                socket.send(JSON.stringify({
-                    type: "RESPONSE", id, success: true,
-                    payload: { url: finalTab.url },
-                }));
-            } catch (err) {
-                socket.send(JSON.stringify({
-                    type: "RESPONSE", id, success: false,
-                    payload: err.message || String(err),
-                }));
-            }
-            return;
-        }
-
-        let tab;
-        try {
-            tab = await chrome.tabs.get(tabId);
-        } catch (err) {
-            socket.send(JSON.stringify({
-                type: "RESPONSE", id, success: false,
-                payload: `tab not found: ${tabId}`,
-            }));
-            return;
-        }
-
-        if (["GET_DOM", "CLICK", "TYPE", "SELECT", "GET_TEXT", "FIND", "SCROLL", "HIGHLIGHT",
-             "SET_MIRROR", "GET_MIRROR"].includes(type)) {
-            // If `by_role` is set, resolve background-side via CDP AXTree,
-            // then rewrite the payload to use the computed CSS selector.
-            let forwardPayload = payload;
-            if (payload && payload.by_role) {
-                try {
-                    const selector = await resolveByRole(tab.id, payload);
-                    forwardPayload = { ...payload, css: selector, by_role: null, by_text: null };
-                } catch (err) {
-                    sendResponse(id, false, err.message || String(err));
-                    return;
-                }
-            }
-            sendToContentScript(tab.id, { type, payload: forwardPayload }, id);
-        } else if (type === "PRESS") {
-            try {
-                await ensureDebuggerAttached(tab.id);
-                const hasLocator = payload.css || payload.xpath || payload.by_text
-                    || payload.by_label || payload.by_placeholder;
-                if (hasLocator) {
-                    const resp = await new Promise(resolve => {
-                        chrome.tabs.sendMessage(tab.id, { type: "FOCUS", payload }, resolve);
-                    });
-                    if (!resp || !resp.success) {
-                        socket.send(JSON.stringify({
-                            type: "RESPONSE", id, success: false,
-                            payload: resp?.payload || "focus failed",
-                        }));
-                        return;
-                    }
-                }
-                await dispatchKey(tab.id, payload.key, payload.modifiers || []);
-                socket.send(JSON.stringify({
-                    type: "RESPONSE", id, success: true,
-                    payload: { pressed: payload.key },
-                }));
-            } catch (err) {
-                socket.send(JSON.stringify({
-                    type: "RESPONSE", id, success: false,
-                    payload: err.message || String(err),
-                }));
-            }
-        } else if (type === "SCREENSHOT") {
-            try {
-                await ensureDebuggerAttached(tab.id);
-                let clip = null;
-                const hasLocator = payload.css || payload.xpath || payload.by_text
-                    || payload.by_label || payload.by_placeholder;
-                if (hasLocator) {
-                    const resp = await new Promise(resolve => {
-                        chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_RECT", payload }, resolve);
-                    });
-                    if (!resp || !resp.success) {
-                        socket.send(JSON.stringify({
-                            type: "RESPONSE", id, success: false,
-                            payload: resp?.payload || "resolve rect failed",
-                        }));
-                        return;
-                    }
-                    const r = resp.payload;
-                    clip = { x: r.x, y: r.y, width: r.width, height: r.height, scale: 1 };
-                }
-                const cdpParams = { format: "png" };
-                if (clip) cdpParams.clip = clip;
-                if (payload.full_page) {
-                    cdpParams.captureBeyondViewport = true;
-                    // If the user set a max_height_px cap, apply it as a clip
-                    // starting from y=0 so we don't spew multi-megabyte PNGs.
-                    const cap = payload.max_height_px || 10000;
-                    if (!clip) {
-                        cdpParams.clip = {
-                            x: 0, y: 0,
-                            width: document.documentElement?.scrollWidth || 1920,
-                            height: Math.min(
-                                document.documentElement?.scrollHeight || cap, cap
-                            ),
-                            scale: 1,
-                        };
-                    }
-                }
-                const shot = await new Promise((resolve, reject) => {
-                    chrome.debugger.sendCommand(
-                        { tabId: tab.id }, "Page.captureScreenshot", cdpParams,
-                        (result) => chrome.runtime.lastError
-                            ? reject(chrome.runtime.lastError) : resolve(result),
-                    );
-                });
-                socket.send(JSON.stringify({
-                    type: "RESPONSE", id, success: true,
-                    payload: {
-                        png_base64: shot.data,
-                        width: clip ? clip.width : 0,
-                        height: clip ? clip.height : 0,
-                    },
-                }));
-            } catch (err) {
-                socket.send(JSON.stringify({
-                    type: "RESPONSE", id, success: false,
-                    payload: err.message || String(err),
-                }));
-            }
-        } else if (type === "EXECUTE") {
-            try {
-                await ensureDebuggerAttached(tab.id);
-                const debugTarget = { tabId: tab.id };
-                // IIFE-wrap so user `const`/`let` don't collide between calls,
-                // and so top-level `await` works. Callers must `return` their value.
-                const wrappedCode = `(async () => {\n${payload.code}\n})()`;
-                chrome.debugger.sendCommand(
-                    debugTarget, "Runtime.evaluate",
-                    { expression: wrappedCode, returnByValue: true, awaitPromise: true },
-                    (result) => {
-                        if (chrome.runtime.lastError) {
-                            socket.send(JSON.stringify({
-                                type: "RESPONSE", id, success: false,
-                                payload: chrome.runtime.lastError.message,
-                            }));
-                        } else if (result.exceptionDetails) {
-                            socket.send(JSON.stringify({
-                                type: "RESPONSE", id, success: false,
-                                payload: result.exceptionDetails.exception.description,
-                            }));
-                        } else {
-                            socket.send(JSON.stringify({
-                                type: "RESPONSE", id, success: true,
-                                payload: result.result.value,
-                            }));
-                        }
-                    }
-                );
-            } catch (error) {
-                socket.send(JSON.stringify({
-                    type: "RESPONSE", id, success: false,
-                    payload: error.message || String(error),
-                }));
-            }
-        }
-        } catch (err) {
-            // Last-ditch safety net: any uncaught failure in a branch body
-            // sends a RESPONSE so the server doesn't 504 in silence.
-            sendResponse(id, false, `extension uncaught: ${err.message || err}`);
-        }
+        };
+        await dispatchCommand(message, respond);
     };
 
     socket.onclose = () => {
