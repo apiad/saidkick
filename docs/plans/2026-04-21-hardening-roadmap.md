@@ -142,6 +142,12 @@ The audit produced 4 critical, 6 high, 6 medium, 3 low-priority items. This plan
 
 ---
 
+## Observed friction (agent sessions)
+
+Running tally of pain points hit while driving saidkick from an agent. Each is a candidate for a future release; not yet sequenced.
+
+- **2026-05-12 — `--by-text` matches every ancestor of the leaf.** Clicking a sidebar item `<li><span class="tree-note">Welcome.md</span></li>` with `--by-text "Welcome.md"` returned "Ambiguous locator: found 8 matches" — the `<span>`, its `<li>`, and ~6 ancestors (`#tree`, `aside`, `main`, `body`, …) all contain the substring. Worked around with `saidkick exec` to find the smallest matching element and `.click()` it. *Proposed:* when `--by-text`/`--by-label`/`--by-placeholder` would be ambiguous purely because of nesting, prefer the leaf-most (smallest-subtree, or smallest bounding-box) match before declaring ambiguity — i.e. an ancestor that matches *only* because a descendant does shouldn't count. Alternatively a `--leaf` flag. Cheap heuristic, removes a very common `--nth`/`exec` fallback.
+
 ## Items explicitly out of scope
 
 - **SW crash recovery beyond what's already there** — `chrome.alarms` + keepalive (in 0.4.5) covers the realistic failure modes; a full state-restore protocol would be major engineering with marginal payoff.
