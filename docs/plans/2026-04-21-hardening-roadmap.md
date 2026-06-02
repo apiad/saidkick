@@ -173,3 +173,7 @@ Suggested release-note cadence:
 ## Starting point
 
 When Alex says "go on 0.4.4," the next step is writing the detailed implementation plan (spec-then-plan style like we did for 0.4.0) for just the 0.4.4 items, then executing. Nothing in this roadmap commits to the implementation detail — it commits to the *order*.
+
+## Observed friction (running log)
+
+- **2026-06-02 — viewport / device emulation gap.** Mobile responsive smoke test for marginalia. Needed a sub-720px viewport to verify `@media (max-width: 720px)` and `pointer: coarse` paths. `window.open(url, name, 'popup=yes,width=412,height=820')` was blocked by Chrome even when dispatched from a real user-gesture `.click()` on an injected button. Worked around by injecting a 412x820 `<iframe>` into an existing tab — fine for CSS layout verification, but the iframe inherits the host's pointer modality, so `pointer: coarse` stays false and touch-conditional JS paths (selection toolbar, audio recorder ergonomics) can't be exercised. **Proposed**: a `--width / --height` flag on `saidkick open` that uses CDP `Emulation.setDeviceMetricsOverride` (or `Emulation.setUserAgentOverride` + touch emulation), and/or a top-level `saidkick set-viewport --tab T --width W --height H [--touch]` command. Closest CDP primitive: `Emulation.setDeviceMetricsOverride` plus `Emulation.setTouchEmulationEnabled`. Would also let us smoke iOS/Android-shaped layouts without touching DevTools.
