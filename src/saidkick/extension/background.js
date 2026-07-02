@@ -145,32 +145,58 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     } catch (_) { /* ignore */ }
 });
 
-function waitForPageEvent(tabId, eventName, timeoutMs) {
+const VALID_WAIT_MODES = ["dom", "full"];
+
+// Wait for a tab's navigation to reach the requested readiness. Uses
+// chrome.tabs.onUpdated (the `tabs` permission) plus a document.readyState poll
+// via chrome.scripting (the `scripting` permission) for "dom" — the status API
+// only surfaces "loading"/"complete", not domContentLoaded. This replaces the
+// old chrome.debugger Page-event approach, whose CDP events were unreliable
+// across a tabs.update navigation (the page execution context is replaced, so
+// Page.domContentLoaded / Page.loadEventFired were frequently missed → the
+// 15s "navigation timeout" even on instant localhost pages).
+//
+// Call this BEFORE issuing chrome.tabs.update so the onUpdated listener is
+// registered in time to catch the "loading" event for the new URL.
+function waitForTabLoad(tabId, mode, timeoutMs) {
     return new Promise((resolve, reject) => {
         let done = false;
-        const handler = (source, method) => {
+        let poll = null;
+        const finish = (err) => {
             if (done) return;
-            if (source.tabId !== tabId) return;
-            if (method !== eventName) return;
             done = true;
             clearTimeout(timer);
-            chrome.debugger.onEvent.removeListener(handler);
-            resolve();
+            if (poll) clearInterval(poll);
+            chrome.tabs.onUpdated.removeListener(onUpdated);
+            err ? reject(err) : resolve();
         };
-        const timer = setTimeout(() => {
-            if (done) return;
-            done = true;
-            chrome.debugger.onEvent.removeListener(handler);
-            reject(new Error(`navigation timeout after ${timeoutMs}ms`));
-        }, timeoutMs);
-        chrome.debugger.onEvent.addListener(handler);
+        const timer = setTimeout(
+            () => finish(new Error(`navigation timeout after ${timeoutMs}ms`)),
+            timeoutMs
+        );
+        const startDomPoll = () => {
+            if (poll) return;
+            poll = setInterval(async () => {
+                try {
+                    const res = await chrome.scripting.executeScript({
+                        target: { tabId },
+                        func: () => document.readyState,
+                    });
+                    const rs = res && res[0] && res[0].result;
+                    if (rs === "interactive" || rs === "complete") finish();
+                } catch (_) {
+                    // Page not injectable yet (mid-navigation); keep polling.
+                }
+            }, 100);
+        };
+        const onUpdated = (id, changeInfo) => {
+            if (id !== tabId) return;
+            if (changeInfo.status === "complete") return finish();
+            if (mode === "dom" && changeInfo.status === "loading") startDomPoll();
+        };
+        chrome.tabs.onUpdated.addListener(onUpdated);
     });
 }
-
-const PAGE_EVENT_FOR_WAIT = {
-    dom: "Page.domContentLoaded",
-    full: "Page.loadEventFired",
-};
 
 const MODIFIER_BITS = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
 
@@ -320,10 +346,12 @@ async function dispatchCommand(message, respond) {
                 });
                 const newTabId = created.id;
                 if (needWait) {
-                    await ensureDebuggerAttached(newTabId);
-                    const ev = PAGE_EVENT_FOR_WAIT[waitMode];
-                    if (!ev) throw new Error(`invalid wait mode: ${waitMode}`);
-                    const waitPromise = waitForPageEvent(newTabId, ev, timeout_ms || 15000);
+                    if (!VALID_WAIT_MODES.includes(waitMode)) {
+                        throw new Error(`invalid wait mode: ${waitMode}`);
+                    }
+                    // Register the listener before navigating so we catch the
+                    // "loading" event for the new URL.
+                    const waitPromise = waitForTabLoad(newTabId, waitMode, timeout_ms || 15000);
                     await chrome.tabs.update(newTabId, { url });
                     await waitPromise;
                 }
@@ -346,10 +374,10 @@ async function dispatchCommand(message, respond) {
             try {
                 const needWait = waitMode && waitMode !== "none";
                 if (needWait) {
-                    await ensureDebuggerAttached(tabId);
-                    const ev = PAGE_EVENT_FOR_WAIT[waitMode];
-                    if (!ev) throw new Error(`invalid wait mode: ${waitMode}`);
-                    const waitPromise = waitForPageEvent(tabId, ev, timeout_ms || 15000);
+                    if (!VALID_WAIT_MODES.includes(waitMode)) {
+                        throw new Error(`invalid wait mode: ${waitMode}`);
+                    }
+                    const waitPromise = waitForTabLoad(tabId, waitMode, timeout_ms || 15000);
                     await chrome.tabs.update(tabId, { url });
                     await waitPromise;
                 } else {
