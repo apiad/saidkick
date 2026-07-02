@@ -409,7 +409,9 @@ def press(
     nth: int = typer.Option(None, "--nth"),
     wait_ms: int = typer.Option(0, "--wait-ms"),
 ):
-    """Press a key, optionally focusing a target first."""
+    """Press a key. Pass a locator (--css/--by-text/...) so the element is
+    focused first — without one, focus is best-effort and may no-op on some
+    pages; pair a bare press with a prior `click` on the target."""
     mods: List[str] = []
     for entry in mod:
         for part in entry.split(","):

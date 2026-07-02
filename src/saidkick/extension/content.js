@@ -133,7 +133,13 @@
             const all = pierce
                 ? Array.from(walkDeep(root, true))
                 : Array.from(root.querySelectorAll("*"));
-            matches = all.filter(pred);
+            let hits = all.filter(pred);
+            // Leaf-most: drop any hit that contains another hit — an ancestor
+            // matches by text only because a descendant does. Keeps the
+            // smallest-subtree match so by_text doesn't spuriously report
+            // "Ambiguous locator: N matches" for nested elements.
+            hits = hits.filter(el => !hits.some(other => other !== el && el.contains(other)));
+            matches = hits;
         }
         if (locator.nth != null) {
             const el = matches[locator.nth];
