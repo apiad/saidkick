@@ -37,5 +37,6 @@ def test_post_execute_routes_through_send_command():
     assert response.status_code == 200
     assert response.json() == "result"
     mock_send.assert_called_with(
-        "br-aaaa", "EXECUTE", payload={"tab_id": 1, "code": "console.log(1)"}
+        "br-aaaa", "EXECUTE",
+        payload={"tab_id": 1, "code": "console.log(1)", "args": []},
     )

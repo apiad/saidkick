@@ -497,8 +497,16 @@ def open_cmd(
 def exec(
     tab: str = typer.Option(..., "--tab"),
     code: Optional[str] = typer.Argument(None),
+    arg: List[str] = typer.Option(
+        [], "--arg",
+        help="Value passed to the code; repeat for multiple. Read via "
+             "args[0], args[1], ... Each is JSON-parsed, else kept as a raw string.",
+    ),
 ):
-    """Execute JS in tab. Must 'return' a value to see it (0.4.0 breaking change)."""
+    """Execute JS in tab. Must 'return' a value to see it (0.4.0 breaking change).
+
+    Pass values with --arg (repeatable); read them in your code via the `args`
+    array — args[0], args[1], ..."""
     if code is None:
         if sys.stdin.isatty():
             console.print("[warning]Waiting for JS from stdin... (Ctrl+D to finish)[/warning]")
@@ -506,8 +514,15 @@ def exec(
     if not code or not code.strip():
         console.print("[error]Error: No code provided.[/error]")
         raise typer.Exit(1)
+    import json as _json
+    parsed_args = []
+    for a in arg:
+        try:
+            parsed_args.append(_json.loads(a))
+        except (ValueError, TypeError):
+            parsed_args.append(a)
     try:
-        result = client.execute(tab=tab, code=code)
+        result = client.execute(tab=tab, code=code, args=parsed_args)
         if isinstance(result, (dict, list)):
             import json
             sys.stdout.write(json.dumps(result))

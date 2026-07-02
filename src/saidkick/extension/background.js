@@ -483,7 +483,14 @@ async function dispatchCommand(message, respond) {
             try {
                 await ensureDebuggerAttached(tab.id);
                 const debugTarget = { tabId: tab.id };
-                const wrappedCode = `(async () => {\n${payload.code}\n})()`;
+                // Expose caller args to the user code as a named `args` array
+                // (a rest parameter — the `arguments` object is unreliable at
+                // the top level of a CDP Runtime.evaluate). JSON is valid JS, so
+                // inlining the serialized array is injection-safe. No args →
+                // (...[]) → args === [], equivalent to the old zero-arg IIFE.
+                const argsJson = JSON.stringify(payload.args || []);
+                const wrappedCode =
+                    `(async function (...args) {\n${payload.code}\n})(...${argsJson})`;
                 chrome.debugger.sendCommand(
                     debugTarget, "Runtime.evaluate",
                     { expression: wrappedCode, returnByValue: true, awaitPromise: true },

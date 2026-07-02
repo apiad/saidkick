@@ -103,8 +103,11 @@ class SaidkickClient:
         return r.json()
 
     # ---- JS execution ----
-    def execute(self, tab: str, code: str) -> Any:
-        r = httpx.post(f"{self.base_url}/execute", json={"tab": tab, "code": code})
+    def execute(self, tab: str, code: str, args: Optional[List[Any]] = None) -> Any:
+        r = httpx.post(
+            f"{self.base_url}/execute",
+            json={"tab": tab, "code": code, "args": args or []},
+        )
         r.raise_for_status()
         return r.json()
 

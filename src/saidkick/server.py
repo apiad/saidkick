@@ -135,6 +135,7 @@ def _command_timeout(wait_ms: int = 0, timeout_ms: int = 0) -> float:
 class ExecuteRequest(BaseModel):
     tab: str
     code: str
+    args: List[Any] = []
 
 class SelectorRequest(Locator):
     tab: str
@@ -378,7 +379,7 @@ async def post_execute(req: ExecuteRequest):
     browser_id, tab_id = _parse_or_400(req.tab)
     response = await manager.send_command(
         browser_id, "EXECUTE",
-        payload={"tab_id": tab_id, "code": req.code},
+        payload={"tab_id": tab_id, "code": req.code, "args": req.args},
     )
     if not response.get("success"):
         _raise_for_extension_error(response.get("payload"))
