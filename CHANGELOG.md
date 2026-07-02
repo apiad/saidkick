@@ -4,6 +4,25 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-02
+
+### Fixed
+
+- **`--wait dom` / `--wait full` no longer time out on fast pages.** The
+  navigation wait used CDP `chrome.debugger` `Page.domContentLoaded` /
+  `Page.loadEventFired` events, which were routinely missed across a
+  `tabs.update` navigation (the page execution context is replaced) — causing a
+  spurious 15s "navigation timeout" even on instant localhost pages. Reworked to
+  `chrome.tabs.onUpdated` (status) plus a `document.readyState` poll for `dom`,
+  using only the existing `tabs` + `scripting` permissions (no manifest change).
+
+### Added
+
+- **`exec --arg`** (repeatable) passes values into the executed JS, read via a
+  named `args` array (`args[0]`, `args[1]`, …). Each `--arg` is JSON-parsed,
+  else kept as a raw string. Previously `exec` had no way to pass data to the
+  page function. Threaded CLI → client → server → extension.
+
 ## [0.7.0] - 2026-07-02
 
 ### Added
