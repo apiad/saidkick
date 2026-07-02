@@ -93,12 +93,33 @@ def logs(
 
 
 @app.command()
+def doctor():
+    """Report server/browser connection state and the exact next action."""
+    try:
+        d = client.doctor()
+    except Exception as e:
+        handle_client_error(e)
+        return
+    console.print(f"server: [success]{d['server']}[/success]  state: {d['state']}")
+    for b in d["browsers"]:
+        tabs = b["tabs"] if b["tabs"] is not None else "?"
+        console.print(f"  [cmd]{b['id']}[/cmd]  tabs: {tabs}")
+    console.print(f"[info]{d['hint']}[/info]")
+
+
+@app.command()
 def tabs(active: bool = typer.Option(False, "--active")):
     """List tabs across connected browsers."""
     try:
         entries = client.list_tabs(active=active)
         if not entries:
-            console.print("[warning]No tabs. Is a browser connected?[/warning]")
+            d = client.doctor()
+            if d["state"] == "connected":
+                ids = ", ".join(b["id"] for b in d["browsers"])
+                console.print(f"[warning]0 tabs, but connected: {ids}. "
+                              f"Use `saidkick open --browser <id> <url>`.[/warning]")
+            else:
+                console.print(f"[warning]{d['hint']}[/warning]")
             return
         for e in entries:
             marker = "  [success](active)[/success]" if e.get("active") else ""

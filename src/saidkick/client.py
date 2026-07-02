@@ -33,6 +33,11 @@ class SaidkickClient:
         r.raise_for_status()
         return r.json()
 
+    def doctor(self) -> Dict[str, Any]:
+        r = httpx.get(f"{self.base_url}/doctor")
+        r.raise_for_status()
+        return r.json()
+
     def get_logs(
         self, limit: int = 100, grep: Optional[str] = None,
         browser: Optional[str] = None,

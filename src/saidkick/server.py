@@ -694,3 +694,26 @@ async def get_tabs(active: bool = False):
                 "windowId": t.get("windowId"),
             })
     return tabs
+
+
+@app.get("/doctor")
+async def get_doctor():
+    browser_ids = list(manager.connections.keys())
+
+    async def _count(bid: str):
+        try:
+            resp = await manager.send_command(bid, "LIST_TABS")
+        except HTTPException:
+            return {"id": bid, "tabs": None}
+        payload = resp.get("payload") if resp.get("success") else None
+        return {"id": bid, "tabs": len(payload) if payload is not None else None}
+
+    browsers = list(await asyncio.gather(*(_count(b) for b in browser_ids)))
+    if browsers:
+        state = "connected"
+        hint = "browser(s) connected; use /open with a browser id even if tabs is 0"
+    else:
+        state = "no-browsers"
+        hint = ("server up, 0 browsers. Click the saidkick extension icon → "
+                "Reconnect. Do NOT restart the server (it orphans the extension WS).")
+    return {"server": "up", "state": state, "browsers": browsers, "hint": hint}
