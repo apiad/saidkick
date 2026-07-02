@@ -4,6 +4,29 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-02
+
+### Added
+
+- **`/doctor` endpoint + `saidkick doctor` CLI.** Names the exact connection
+  state (server up/down, browsers connected, tab counts) and the next action.
+  Surfaces connected browser ids even when a browser reports 0 tabs, so scripts
+  can `open` without a prior `tabs` listing. `SaidkickClient.doctor()` added.
+
+### Changed
+
+- **`tabs` distinguishes empty states.** Instead of the single misleading
+  "No tabs. Is a browser connected?", it now separates "server up, 0 browsers"
+  (needs a Reconnect) from "connected, 0 tabs" (use `open --browser <id>`).
+
+### Fixed
+
+- **Leaf-most `by_text` / `by_label` / `by_placeholder`.** An ancestor that
+  matches only because a descendant does is now dropped, so nested text no
+  longer trips a spurious "Ambiguous locator: N matches". css/xpath unchanged.
+- **`press` help** now steers callers to pass a locator for deterministic
+  focus-before-keystroke.
+
 ## [0.6.0] - 2026-04-29
 
 ### Changed
