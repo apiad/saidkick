@@ -19,14 +19,16 @@ It's the right size for **terminal-driven debugging, agent automation, and perso
 
 ## ⚡ Features
 
-* **🎯 Semantic locators.** Target elements by what the user sees: `--by-text "Send"`, `--by-label "Password"`, `--by-placeholder "Search…"`. Falls back to CSS/XPath when you need precision.
+* **🎯 Semantic locators.** Target elements by what the user sees: `--by-text "Send"`, `--by-label "Password"`, `--by-placeholder "Search…"`. Falls back to CSS/XPath when you need precision. `--by-text` returns the **leaf-most** match — an ancestor that matches only because a descendant does is dropped, so nested text doesn't trip a spurious "ambiguous locator".
 * **🧭 Scroll-into-view.** `saidkick scroll --tab $TAB --by-text "Chapter 3"` brings an element into the viewport — essential before screenshotting something offscreen, and handy for pulling more content on infinite-scroll pages.
 * **🔴 Highlight.** `saidkick highlight --tab $TAB --by-text "Deploy"` draws a temporary red ring around an element. Use it to point the user at *exactly* what to click when you're guiding them — pair with `screenshot` and they see the ring in the image.
 * **🔤 Real keyboard events.** `saidkick press Enter --tab $TAB` dispatches a native CDP `Input.dispatchKeyEvent` — frameworks (Lexical, ProseMirror, React) treat it as a real keystroke, not a synthesised blob.
 * **📸 Screenshots.** `saidkick screenshot --tab $TAB --output /tmp/shot.png` via CDP `Page.captureScreenshot`. Optional locator clips to an element; `--full-page` captures beyond the viewport.
 * **✍️ Rich-text input.** `saidkick type` understands `contenteditable` via `document.execCommand("insertText", …)` — works on WhatsApp, Slack, Discord, Gmail compose, GitHub comments, Notion, and every other Lexical/ProseMirror/Quill/Slate/Draft-backed editor.
 * **⏳ Wait-for-element built in.** `--wait-ms N` on every selector-using command polls the DOM until it resolves. Default 0 preserves fail-fast behaviour.
-* **🧵 Multi-browser, multi-tab.** Each extension connection gets an ephemeral `br-XXXX` ID; commands address tabs as `br-XXXX:N` composites. Pipe the output of `saidkick open` straight into the next command.
+* **🧵 Multi-browser, multi-tab.** Each extension connection gets an ephemeral `br-XXXX` ID; commands address tabs as `br-XXXX:N` composites. Pipe the output of `saidkick open` straight into the next command. `saidkick close --tab T` disposes of a tab when you're done.
+* **🩺 Health check.** `saidkick doctor` names the exact connection state — server down, server up with no browser, or connected — and the next action, surfacing connected browser ids even when a browser reports zero tabs.
+* **📦 JS with arguments.** `saidkick exec --tab T "return args[0]" --arg foo` passes values into the executed function (read via `args[0]`, `args[1]`, …); each `--arg` is JSON-parsed, else kept as a raw string.
 * **🛡️ CSP bypass.** Runs scripts via `chrome.debugger` on pages that block content-script injection.
 * **🐚 Pipe-friendly CLI.** One token per stdout (`saidkick open` prints `br-XXXX:N`; `saidkick screenshot` emits raw PNG bytes). Everything composes in bash.
 
@@ -115,7 +117,8 @@ Good uses:
 
 | Command | What it does |
 |---|---|
-| `saidkick start` | Start the FastAPI hub (defaults to `0.0.0.0:6992`). |
+| `saidkick start` | Start the FastAPI hub (defaults to `127.0.0.1:6992`). |
+| `saidkick doctor` | Report connection state (server/browsers/tabs) and the next action. |
 | `saidkick tabs` | List tabs across connected browsers (`--active` filter). |
 | `saidkick find --tab T --by-text X` | Return JSON list of matching elements (debug). |
 | `saidkick dom --tab T --css X` | Outer-HTML of matched element(s). |
@@ -129,7 +132,8 @@ Good uses:
 | `saidkick screenshot --tab T [--output PATH]` | Capture PNG. |
 | `saidkick navigate URL --tab T [--wait dom\|full\|none]` | Redirect a tab. |
 | `saidkick open URL --browser BR` | New tab; prints the composite `br-XXXX:N`. |
-| `saidkick exec --tab T "return …"` | Arbitrary JS via CDP (must `return` a value). |
+| `saidkick close --tab T` | Close a tab. |
+| `saidkick exec --tab T "return …" [--arg V …]` | Arbitrary JS via CDP (must `return` a value); `--arg` passes values, read as `args[0]`, `args[1]`, … |
 | `saidkick logs [--grep X] [--browser BR]` | Console-log buffer. |
 
 Every selector-using command accepts the same locator options: `--css`, `--xpath`, `--by-text`, `--by-label`, `--by-placeholder`, `--within-css`, `--nth`, `--exact`, `--regex`, `--wait-ms`. Exactly one locator must be set (400 otherwise).
@@ -152,6 +156,11 @@ c.press(tab, "Enter")
 # Screenshot the results
 shot = c.screenshot(tab)
 import base64; open("/tmp/ddg.png", "wb").write(base64.b64decode(shot["png_base64"]))
+
+# Run JS with arguments, check health, and clean up
+title = c.execute(tab, "return document.title.startsWith(args[0])", args=["Results"])
+print(c.doctor()["state"])   # "connected" | "no-browsers"
+c.close(tab)
 ```
 
 ## 🧱 Architecture

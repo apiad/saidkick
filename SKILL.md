@@ -11,7 +11,7 @@ This is the how-to for an AI agent working with saidkick. Saidkick is a self-hos
 
 Prefer saidkick for any browser task where:
 
-- The user has `saidkick start` running and the extension connected (check with `saidkick tabs`).
+- The user has `saidkick start` running and the extension connected (check with `saidkick doctor`).
 - The task involves a real user session — something logged in, something with cookies, something that requires the browser extensions the user already has.
 - You're scripting a multi-step flow (open → click → type → screenshot).
 - You want to read what the user is looking at right now without them copy-pasting it.
@@ -23,10 +23,15 @@ Reach for `claude-in-chrome` or another MCP browser tool only when saidkick is g
 Before any saidkick command, verify the server is up and at least one browser is connected:
 
 ```bash
-saidkick tabs
+saidkick doctor
 ```
 
-If you get `No tabs. Is a browser connected?` — ask the user to (a) start `saidkick start` if the server isn't running, (b) click the Saidkick extension icon and hit **Reconnect** if the service worker has gone idle. Don't guess at tab IDs; always list first.
+`doctor` names the exact state and the fix:
+- **server down** → run `saidkick start`.
+- **server up, 0 browsers** → ask the user to click the Saidkick extension icon and hit **Reconnect**. Do *not* restart the server — that orphans the extension WebSocket.
+- **connected** → it lists each browser id and tab count (shown even when a browser reports 0 tabs, so you can `open --browser <id>` without a `tabs` listing first).
+
+Don't guess at tab IDs; discover them with `saidkick tabs` or capture them from `saidkick open`.
 
 ## The composite tab ID
 
@@ -41,7 +46,7 @@ TAB=$(saidkick open --browser br-a1b2 https://example.com/)
 saidkick text --tab "$TAB" --css "h1"
 ```
 
-## Locators — the load-bearing idea
+## Locators — the idea that matters most
 
 Every selector-using command (`dom`, `text`, `click`, `type`, `select`, `find`, `press`, `screenshot`) takes exactly one locator. Prefer *semantic* over CSS when you can:
 
@@ -56,7 +61,7 @@ Every selector-using command (`dom`, `text`, `click`, `type`, `select`, `find`, 
 | "Full-string equal only" | `--by-text "OK" --exact` |
 | "Regex match" | `--by-text "^Save.*" --regex` |
 
-Substring match is case-insensitive by default — good enough for 90% of "the button that says X." Escape hatches (`--exact`, `--regex`) for the rest.
+Substring match is case-insensitive by default — good enough for 90% of "the button that says X." Escape hatches (`--exact`, `--regex`) for the rest. `--by-text` resolves to the **leaf-most** match, so nested markup like `<li><span>Welcome.md</span></li>` targets the `<span>` rather than erroring "ambiguous" on every ancestor.
 
 **Exactly one** of the locator options must be set per command. Zero → 400. Two → 400. Ambiguous match (2+ elements) → 400 unless you pass `--nth` to disambiguate.
 
@@ -166,18 +171,30 @@ Modifiers: `ctrl`, `shift`, `alt`, `meta`. Comma-separated (`--mod ctrl,shift`) 
 
 ### Arbitrary JS (the escape hatch)
 
-When no primitive fits:
+When no primitive fits (code runs in an `async function` — you must `return`):
 
 ```bash
 echo 'return document.cookie' | saidkick exec --tab "$TAB"
 echo 'return Array.from(document.scripts).map(s => s.src)' | saidkick exec --tab "$TAB"
+
+# Pass values in with --arg (repeatable); read them as args[0], args[1], …
+# Each --arg is JSON-parsed (else a raw string). Safer than string-building code.
+saidkick exec --tab "$TAB" 'return document.querySelector(args[0])?.value' --arg '#email'
+```
+
+### Closing a tab
+
+Dispose of a tab you opened (e.g. cleaning up after a scripted flow):
+
+```bash
+saidkick close --tab "$TAB"
 ```
 
 **Important:** user code must `return` a value — `exec` wraps it in `(async () => { ... })()` so scope doesn't leak between calls. A bare `document.title` does nothing; use `return document.title`. Top-level `await` works because of the async wrapper.
 
 ## Gotchas
 
-- **MV3 service-worker idle.** Chrome puts extension service workers to sleep after ~30s of inactivity. If `saidkick tabs` returns `[]` but the extension is installed, have the user click the Saidkick popup's **Reconnect** button.
+- **Connection state.** Run `saidkick doctor` when anything looks off — it separates "server down" (run `start`), "server up, 0 browsers" (user clicks **Reconnect**), and "connected". Since 0.6.0 the WebSocket lives in an offscreen document, so the old MV3 service-worker idle drops are rare. Never restart the server to fix a browser-side disconnect — that orphans the extension WS; a Reconnect click is the fix.
 - **Content-script not in older tabs.** Tabs that were already open before the extension was installed/reloaded don't have `content.js` yet — the extension injects it lazily on first command. No action needed; it works.
 - **Locator ambiguity = 400.** If a locator matches multiple elements and you don't pass `--nth`, you get a 400 with the match count. Use `saidkick find` to inspect matches, pick an `--nth`, tighten with `--within-css`, or use `--exact`/`--regex`.
 - **Rich-text editors.** `saidkick type` correctly handles `contenteditable` via `document.execCommand("insertText", ...)` — works on Lexical, ProseMirror, Slate, Quill, Draft. For older versions or edge cases, fall back to `saidkick exec` with a targeted `execCommand`.
@@ -187,6 +204,7 @@ echo 'return Array.from(document.scripts).map(s => s.src)' | saidkick exec --tab
 ## Status and debug
 
 ```bash
+saidkick doctor                           # connection state + next action
 saidkick tabs                             # who's connected
 saidkick logs --limit 20                  # last 20 browser console lines
 saidkick logs --grep "error" --browser br-a1b2   # filter

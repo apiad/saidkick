@@ -42,7 +42,7 @@ saidkick text --tab "$TAB" --css "main" --wait-ms 5000
 
 Real apps ship class-obfuscated DOMs. The semantic locators let you target by what the user sees rather than what the framework compiled:
 
-- `--by-text "Send"` — substring (case-insensitive) match on the element's text.
+- `--by-text "Send"` — substring (case-insensitive) match on the element's text. Returns the **leaf-most** match: an ancestor that matches only because a descendant does is dropped, so `--by-text "Welcome.md"` on `<li><span>Welcome.md</span></li>` resolves to the `<span>` instead of erroring "ambiguous".
 - `--by-label "Type a message"` — matches `aria-label`, `aria-labelledby` target, or `<label for>`.
 - `--by-placeholder "Search..."` — matches the HTML `placeholder` attribute.
 
@@ -153,10 +153,27 @@ Capture a PNG.
 - `--output PATH`: write to a file (overwrites silently); default is raw bytes to stdout.
 
 ### `saidkick exec`
-Execute arbitrary JavaScript and return the result as JSON.
+Execute arbitrary JavaScript and return the result as JSON. The code runs inside
+an `async function`, so you **must `return`** the value you want back (a `0.4.0`
+breaking change).
 - `code`: (Optional argument) The JS code to run. If not provided, reads from stdin.
 - `--tab` (required): Target tab (`br-XXXX:N`).
-- **Example**: `echo "document.title" | saidkick exec --tab br-a1b2:12`
+- `--arg V` (repeatable): pass a value into the code, read via `args[0]`, `args[1]`, …
+  Each `--arg` is JSON-parsed (`42` → number, `{"x":1}` → object), else kept as a raw string.
+- **Example**: `saidkick exec --tab br-a1b2:12 "return document.title"`
+- **With args**: `saidkick exec --tab br-a1b2:12 "return args[0] + args[1].n" --arg hi --arg '{"n":3}'`
+
+### `saidkick doctor`
+Report the connection state and the exact next action. Distinguishes the three
+states that `tabs` used to collapse into one message:
+- **server down** → run `saidkick start`.
+- **server up, 0 browsers** → click the extension icon → Reconnect (do *not*
+  restart the server, which orphans the extension WebSocket).
+- **connected** → lists each browser id and its tab count (surfaced even when a
+  browser reports 0 tabs, so you can `open` without a prior `tabs` listing).
+
+### `saidkick close`
+Close a tab. `--tab` (required). The debugger is detached automatically.
 
 ---
 
@@ -173,8 +190,8 @@ client = SaidkickClient(base_url="http://localhost:6992")
 tabs = client.list_tabs(active=True)
 tab = tabs[0]["tab"]  # e.g. "br-a1b2:12"
 
-# Get page title
-title = client.execute(tab, "document.title")
+# Get page title (exec code must `return` its value)
+title = client.execute(tab, "return document.title")
 print(f"Title: {title}")
 
 # Interaction example
