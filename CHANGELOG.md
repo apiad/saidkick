@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-07-02
+
+### Added
+
+- **`close` command** — `saidkick close --tab T` closes a tab (`/close`
+  endpoint + `SaidkickClient.close`). The debugger is detached automatically by
+  the existing `tabs.onRemoved` listener. Enables e2e harnesses to clean up the
+  tabs they open instead of accumulating them across runs.
+
 ## [0.7.1] - 2026-07-02
 
 ### Fixed
