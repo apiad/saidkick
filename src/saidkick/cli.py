@@ -462,6 +462,16 @@ def screenshot(
 
 
 @app.command()
+def close(tab: str = typer.Option(..., "--tab")):
+    """Close a tab."""
+    try:
+        out = client.close(tab=tab)
+        console.print(f"[success]closed {out.get('closed')}[/success]")
+    except Exception as e:
+        handle_client_error(e)
+
+
+@app.command()
 def navigate(
     url: str = typer.Argument(...),
     tab: str = typer.Option(..., "--tab"),

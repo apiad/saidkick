@@ -57,6 +57,11 @@ class SaidkickClient:
         return r.json()
 
     # ---- navigation ----
+    def close(self, tab: str) -> Dict[str, Any]:
+        r = httpx.post(f"{self.base_url}/close", json={"tab": tab})
+        r.raise_for_status()
+        return r.json()
+
     def navigate(self, tab: str, url: str, wait: str = "dom", timeout_ms: int = 15000):
         r = httpx.post(
             f"{self.base_url}/navigate",

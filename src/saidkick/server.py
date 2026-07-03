@@ -156,6 +156,9 @@ class NavigateRequest(BaseModel):
     wait: WaitMode = "dom"
     timeout_ms: int = 15000
 
+class CloseRequest(BaseModel):
+    tab: str
+
 _VALID_MODIFIERS = {"ctrl", "shift", "alt", "meta"}
 
 
@@ -467,6 +470,17 @@ async def post_select(req: SelectRequest):
             **_locator_payload(req),
         },
         timeout=_command_timeout(wait_ms=req.wait_ms),
+    )
+    if not response.get("success"):
+        _raise_for_extension_error(response.get("payload"))
+    return response.get("payload")
+
+
+@app.post("/close")
+async def post_close(req: CloseRequest):
+    browser_id, tab_id = _parse_or_400(req.tab)
+    response = await manager.send_command(
+        browser_id, "CLOSE", payload={"tab_id": tab_id},
     )
     if not response.get("success"):
         _raise_for_extension_error(response.get("payload"))

@@ -369,6 +369,18 @@ async function dispatchCommand(message, respond) {
             return;
         }
 
+        if (type === "CLOSE") {
+            try {
+                // chrome.tabs.onRemoved (above) detaches the debugger and cleans
+                // up attachedTabs automatically once the tab is gone.
+                await chrome.tabs.remove(tabId);
+                respond(true, { closed: tabId });
+            } catch (err) {
+                respond(false, err.message || String(err));
+            }
+            return;
+        }
+
         if (type === "NAVIGATE") {
             const { url, wait: waitMode, timeout_ms } = payload || {};
             try {
