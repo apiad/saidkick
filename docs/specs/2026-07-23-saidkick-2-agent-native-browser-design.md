@@ -59,9 +59,14 @@ A live browsing session in one of two modes.
 
 **Attached** — Playwright `launch_persistent_context` against the profile directory. Writes back.
 This is "act as the real signed-in user on GitHub." **Exactly one attached context per profile
-may be live at a time**:
-Chromium takes an exclusive lock on a user-data-dir, so this is a hard constraint of the engine,
-not a policy choice. A second attempt raises `ProfileLocked`.
+may be live at a time**, and a second attempt raises `ProfileLocked`.
+
+Correction verified on Playwright 1.61 / headless Chromium: contrary to an earlier assumption
+here, a second `launch_persistent_context` on the same user-data-dir **does not** fail — Chromium
+does not take the exclusive `SingletonLock` in this configuration. So `ProfileLocked` is a
+**daemon-enforced invariant**, not a reflection of an OS lock: the engine tracks which profiles
+have a live attached context and refuses a second. This is more predictable than depending on
+Chromium's behaviour, which varies by platform and headless mode.
 
 **Ephemeral** — a fresh context seeded from a snapshot of the profile's storage state, discarded
 on close. Unlimited parallel instances. This is the e2e-testing mode and the safe default for
