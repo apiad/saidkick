@@ -68,8 +68,39 @@ Three layers, and the distinction between the middle two is what makes end-to-en
 | **Context** | An isolated cookie jar and storage partition. Two contexts cannot see each other's logins. |
 | **Tab** | A page inside a context, addressed `ctx_a1b2:3`. Tabs in one context share session state. |
 
-Contexts today are **ephemeral**: they start empty and are discarded on close. That is the right
-default — reproducible, and incapable of damaging real logged-in state.
+Contexts default to **ephemeral**: they start empty and are discarded on close — reproducible, and
+incapable of damaging real logged-in state. Name a **profile** and they persist. See
+[Profiles](#-profiles).
+
+## 💾 Profiles
+
+Logins don't have to evaporate. A **profile** is a named store on disk under
+`~/.saidkick/profiles/<name>/`. There are two ways to use one:
+
+| | ephemeral (seeded) | attached |
+|---|---|---|
+| how | `open_context(profile="x")` | `open_context(profile="x", mode="attached")` |
+| storage | copy of the profile's cookies + localStorage | the profile's real on-disk storage |
+| writes back | no (discarded on close) | yes |
+| IndexedDB / sessionStorage | **not** carried | preserved |
+| parallel | unlimited | one at a time (`ProfileLocked`) |
+
+**The bootstrapping loop** — how a profile gets a login in the first place:
+
+```
+agent → open_context(profile="github")     # ephemeral, empty the first time
+agent → navigate to the login wall
+agent → request_human("please sign me into GitHub")   # and relays it to you
+you   → take over in the cockpit, sign in, release
+agent → save_profile(context, "github")     # captures the authenticated state
+        # every future open_context(profile="github") now starts signed in
+```
+
+`save_profile` snapshots cookies + localStorage. For an app that keeps its auth in IndexedDB
+(some Firebase/Supabase setups), use `mode="attached"` instead — the persistent user-data-dir
+preserves everything, at the cost of one-at-a-time access.
+
+`saidkick profiles` lists them; `saidkick save-profile --context C --name N` saves from the CLI.
 
 ## 🙋 The human in the loop
 
@@ -114,6 +145,7 @@ Saidkick ships no integration with any chat, mail, or push provider.
 | Group | Tools |
 |---|---|
 | Contexts | `list_contexts`, `open_context`, `close_context` |
+| Profiles | `list_profiles`, `save_profile` |
 | Tabs | `list_tabs`, `open_tab`, `close_tab`, `navigate` |
 | Reading | `snapshot_page`, `screenshot`, `find` |
 | Acting | `click`, `type`, `press`, `select`, `highlight` (each also accepts `handle=`) |
@@ -229,8 +261,8 @@ because a 2FA code should be inserted, not synthesised as thirty keystrokes.
 | drives your real Chrome | drives its own Chromium |
 
 **Contexts start logged into nothing.** The first time an agent hits a login wall it pauses, you
-authenticate through takeover, and from VS3 onward `save_profile` will make that durable. This is
-the same mechanic as the 2FA flow, applied to bootstrapping.
+authenticate through takeover, and `save_profile` makes it durable (see [Profiles](#-profiles)).
+This is the same mechanic as the 2FA flow, applied to bootstrapping.
 
 Scripts that hardcode a `br-XXXX:N` id will break. There is no compatibility shim — deleting the
 extension is most of the point.
@@ -250,10 +282,9 @@ uv run saidkick serve --headful  # watch it work
 
 Shipped: isolated contexts and tabs, ARIA snapshots, the full locator vocabulary, actions, MCP,
 REST, the cockpit with live view and takeover, control arbitration, `request_human`, the terminal
-dashboard, the attention overlay, and **pins**.
+dashboard, the attention overlay, **pins**, and **persistent profiles**.
 
-Next: persistent profiles and `save_profile` (so logins survive a restart); a run log and trace
-replay.
+Next: a run log and trace replay (VS5).
 
 ## 📜 License
 

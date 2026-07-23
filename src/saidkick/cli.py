@@ -132,9 +132,10 @@ def contexts():
     """List live browsing contexts."""
     try:
         for ctx in _client().list_contexts():
-            prof = f" [{ctx['mode']}:{ctx['profile']}]" if ctx.get("profile") else f" [{ctx['mode']}]"
+            # Parens, not brackets: Rich reads [..] as console markup and drops it.
+            tag = f"{ctx['mode']}:{ctx['profile']}" if ctx.get("profile") else ctx["mode"]
             console.print(
-                f"{ctx['id']}  {ctx['controller']:<6} {len(ctx['tabs'])} tab(s){prof}"
+                f"{ctx['id']}  {ctx['controller']:<6} {len(ctx['tabs'])} tab(s)  ({tag})"
             )
     except Exception as exc:
         handle_client_error(exc)

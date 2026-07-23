@@ -24,9 +24,24 @@ starting it yourself — it owns a browser and a port.
 
 - **Context** — an isolated cookie jar. Two contexts cannot see each other's logins.
 - **Tab** — a page inside a context, addressed `ctx_a1b2:3`. Tabs in one context share a session.
+- **Profile** — a saved login on disk. `open_context(profile="github")` seeds a context from it.
 
 Open **one context per task**. Do not reuse a context for unrelated work, and close it when you
 are finished.
+
+## Logins
+
+Contexts start logged into nothing. When you need a login:
+
+1. `list_profiles` — if one already exists for this site, `open_context(profile="that")` and you
+   are signed in. Done.
+2. Otherwise open a context, go to the login page, and call `request_human` — ask the user to
+   sign in. Relay it (see below). When they release control, call `save_profile(context, "name")`
+   so you never have to ask again.
+
+Use `mode="attached"` only when you must modify a real logged-in account and the app keeps its
+session in IndexedDB (seeded ephemeral contexts don't carry that). Attached is one-at-a-time per
+profile; prefer seeded ephemeral otherwise.
 
 ## The loop
 

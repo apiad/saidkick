@@ -4,6 +4,35 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-07-23
+
+### Added
+
+- **Persistent profiles.** A named profile under `~/.saidkick/profiles/<name>/`
+  keeps a login across restarts. `open_context(profile="x")` seeds an ephemeral
+  context from it (cookies + localStorage); `open_context(profile="x",
+  mode="attached")` opens its persistent on-disk storage and writes back
+  (preserving IndexedDB too).
+- **`save_profile(context, name)`** — capture a context's authenticated state so
+  the next context on that profile starts signed in. This is the bootstrapping
+  loop: open ephemeral, `request_human`, they sign in, `save_profile`.
+- MCP tools `list_profiles` and `save_profile`; `open_context` gains `profile`
+  and `mode`.
+- REST: `profile`/`mode` on `POST /contexts`, `POST /contexts/{cid}/save-profile`,
+  `GET /profiles`, `DELETE /profiles/{name}`.
+- CLI: `saidkick profiles`, `saidkick save-profile`, and a profile column on
+  `saidkick contexts`.
+- `SAIDKICK_HOME` overrides the profile root (default `~/.saidkick`).
+
+### Notes
+
+- `ProfileLocked` (one live attached context per profile) is enforced by the
+  daemon, not by Chromium: a headless user-data-dir is not exclusively locked,
+  so relying on the OS would be unreliable.
+- Ephemeral seeding carries cookies and localStorage only. Apps that keep auth
+  in IndexedDB or sessionStorage need `mode="attached"`.
+
+
 ## [2.1.0] - 2026-07-23
 
 ### Added
