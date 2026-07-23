@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head><title>Form</title></head>
+<body>
+<h1>Form</h1>
+<form id="f" onsubmit="event.preventDefault();document.getElementById('out').textContent='submitted:'+document.getElementById('u').value;">
+  <label for="u">Username</label>
+  <input id="u" name="u" placeholder="your name">
+  <label for="c">Country</label>
+  <select id="c">
+    <option value="cu">Cuba</option>
+    <option value="es">Spain</option>
+  </select>
+  <button type="submit" id="go">Send</button>
+</form>
+<div contenteditable="true" aria-label="Message" id="editor">edit me</div>
+<div id="out"></div>
+<div id="nested"><span>Outer <b>Send</b></span></div>
+</body>
+</html>

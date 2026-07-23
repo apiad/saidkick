@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head><title>Delayed</title></head>
+<body>
+<h1>Delayed</h1>
+<div id="host"></div>
+<script>
+  setTimeout(function () {
+    var d = document.createElement("div");
+    d.id = "late";
+    d.textContent = "ready";
+    document.getElementById("host").appendChild(d);
+  }, 800);
+</script>
+</body>
+</html>
