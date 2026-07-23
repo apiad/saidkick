@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if requests %}
+<section class="needs-you">
+  <h2>Needs you</h2>
+  {% for req in requests %}
+  <a class="request" href="/session/{{ req.context }}">
+    <span class="reason">{{ req.reason }}</span>
+    <span class="meta">{{ req.context }} · {{ req.remaining_s | round | int }}s left</span>
+  </a>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section>
+  <h2>Contexts</h2>
+  {% if not contexts %}
+    <p class="empty">No contexts open. An agent creates one with <code>open_context</code>.</p>
+  {% endif %}
+  <ul class="contexts">
+    {% for ctx in contexts %}
+    <li>
+      <a href="/session/{{ ctx.id }}">{{ ctx.id }}</a>
+      <span class="badge badge-{{ ctx.controller }}">{{ ctx.controller }}</span>
+      <span class="meta">{{ ctx.tabs | length }} tab(s)</span>
+      <ul class="tabs">
+        {% for tab in ctx.tabs %}<li class="meta">{{ tab.id }} — {{ tab.url }}</li>{% endfor %}
+      </ul>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+{% endblock %}

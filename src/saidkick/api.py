@@ -72,14 +72,24 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # The MCP Starlette app carries its own lifespan (the session manager).
-        # Mounting it without running that lifespan yields requests that hang
-        # rather than a clear error, so it is wired here explicitly.
-        if mcp is not None:
-            async with mcp.session_manager.run():
+        # Setting a lifespan silently disables @app.on_event handlers, so
+        # engine startup has to live here. start() is idempotent; we only stop
+        # what we started, so an engine owned by a caller is left alone.
+        started_here = not engine.is_running
+        if started_here:
+            await engine.start()
+        try:
+            # The MCP Starlette app carries its own lifespan (the session
+            # manager). Mounting it without running that lifespan yields
+            # requests that hang rather than a clear error.
+            if mcp is not None:
+                async with mcp.session_manager.run():
+                    yield
+            else:
                 yield
-        else:
-            yield
+        finally:
+            if started_here:
+                await engine.stop()
 
     app = FastAPI(title="saidkick", lifespan=lifespan)
     app.state.engine = engine

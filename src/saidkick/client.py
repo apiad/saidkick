@@ -1,204 +1,152 @@
+"""Synchronous HTTP client for the saidkick daemon.
+
+Everything the CLI does is available here, so scripts can drive a browser
+without shelling out.
+"""
+
+import base64
+import os
+from typing import Any
+
 import httpx
-from typing import List, Dict, Any, Optional
+
+DEFAULT_BASE_URL = "http://localhost:6992"
+
+#: Point the CLI and client at a daemon elsewhere (another port, another host).
+BASE_URL_ENV = "SAIDKICK_URL"
+
+LOCATOR_KEYS = (
+    "css",
+    "xpath",
+    "by_text",
+    "by_label",
+    "by_placeholder",
+    "by_role",
+    "within_css",
+    "nth",
+    "exact",
+    "regex",
+    "wait_ms",
+)
 
 
 class SaidkickClient:
-    def __init__(self, base_url: str = "http://localhost:6992"):
-        self.base_url = base_url
+    def __init__(self, base_url: str | None = None, timeout: float = 30.0):
+        resolved = base_url or os.environ.get(BASE_URL_ENV) or DEFAULT_BASE_URL
+        self.base_url = resolved.rstrip("/")
+        self._client = httpx.Client(base_url=self.base_url, timeout=timeout)
+
+    # -- plumbing ---------------------------------------------------------
 
     @staticmethod
-    def _locator_params(
-        css=None, xpath=None, by_text=None, by_label=None, by_placeholder=None,
-        by_role=None, within_css=None, nth=None, exact=False, regex=False,
-        pierce_shadow=False,
-    ) -> Dict[str, Any]:
-        out: Dict[str, Any] = {}
-        if css is not None: out["css"] = css
-        if xpath is not None: out["xpath"] = xpath
-        if by_text is not None: out["by_text"] = by_text
-        if by_label is not None: out["by_label"] = by_label
-        if by_placeholder is not None: out["by_placeholder"] = by_placeholder
-        if by_role is not None: out["by_role"] = by_role
-        if within_css is not None: out["within_css"] = within_css
-        if nth is not None: out["nth"] = nth
-        if exact: out["exact"] = True
-        if regex: out["regex"] = True
-        if pierce_shadow: out["pierce_shadow"] = True
-        return out
+    def _locator(kwargs: dict[str, Any]) -> dict[str, Any]:
+        return {k: v for k, v in kwargs.items() if k in LOCATOR_KEYS and v is not None}
 
-    # ---- introspection ----
-    def list_tabs(self, active: bool = False) -> List[Dict[str, Any]]:
-        params = {"active": "true" if active else "false"}
-        r = httpx.get(f"{self.base_url}/tabs", params=params)
-        r.raise_for_status()
-        return r.json()
+    def _json(self, response: httpx.Response) -> Any:
+        response.raise_for_status()
+        return response.json()
 
-    def doctor(self) -> Dict[str, Any]:
-        r = httpx.get(f"{self.base_url}/doctor")
-        r.raise_for_status()
-        return r.json()
+    def close(self) -> None:
+        self._client.close()
 
-    def get_logs(
-        self, limit: int = 100, grep: Optional[str] = None,
-        browser: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        params: Dict[str, Any] = {"limit": limit}
-        if grep: params["grep"] = grep
-        if browser: params["browser"] = browser
-        r = httpx.get(f"{self.base_url}/console", params=params)
-        r.raise_for_status()
-        return r.json()
+    # -- health and contexts ----------------------------------------------
 
-    def find(self, tab: str, wait_ms: int = 0, **locator) -> List[Dict[str, Any]]:
-        params = {"tab": tab, "wait_ms": wait_ms, **self._locator_params(**locator)}
-        r = httpx.get(f"{self.base_url}/find", params=params,
-                      timeout=wait_ms / 1000 + 10)
-        r.raise_for_status()
-        return r.json()
+    def health(self) -> dict:
+        return self._json(self._client.get("/health"))
 
-    # ---- navigation ----
-    def close(self, tab: str) -> Dict[str, Any]:
-        r = httpx.post(f"{self.base_url}/close", json={"tab": tab})
-        r.raise_for_status()
-        return r.json()
+    def list_contexts(self) -> list[dict]:
+        return self._json(self._client.get("/contexts"))
 
-    def navigate(self, tab: str, url: str, wait: str = "dom", timeout_ms: int = 15000):
-        r = httpx.post(
-            f"{self.base_url}/navigate",
-            json={"tab": tab, "url": url, "wait": wait, "timeout_ms": timeout_ms},
-            timeout=timeout_ms / 1000 + 10,
+    def open_context(self, viewport: dict | None = None) -> dict:
+        body = {"viewport": viewport} if viewport else {}
+        return self._json(self._client.post("/contexts", json=body))
+
+    def close_context(self, context: str) -> dict:
+        return self._json(self._client.delete(f"/contexts/{context}"))
+
+    # -- tabs --------------------------------------------------------------
+
+    def list_tabs(self, context: str) -> list[dict]:
+        return self._json(self._client.get(f"/contexts/{context}/tabs"))
+
+    def open_tab(self, context: str, url: str | None = None, wait: str = "load") -> dict:
+        return self._json(
+            self._client.post(f"/contexts/{context}/tabs", json={"url": url, "wait": wait})
         )
-        r.raise_for_status()
-        return r.json()
 
-    def open(
-        self, browser: str, url: str,
-        wait: str = "dom", timeout_ms: int = 15000, activate: bool = False,
-    ):
-        r = httpx.post(
-            f"{self.base_url}/open",
-            json={"browser": browser, "url": url, "wait": wait,
-                  "timeout_ms": timeout_ms, "activate": activate},
-            timeout=timeout_ms / 1000 + 10,
+    def close_tab(self, tab: str) -> dict:
+        return self._json(self._client.delete(f"/tabs/{tab}"))
+
+    def navigate(self, tab: str, url: str, wait: str = "load") -> dict:
+        return self._json(
+            self._client.post(f"/tabs/{tab}/navigate", json={"url": url, "wait": wait})
         )
-        r.raise_for_status()
-        return r.json()
 
-    # ---- DOM / text / screenshot ----
-    def get_dom(self, tab: str, all_matches: bool = False, wait_ms: int = 0, **locator) -> str:
-        params = {"tab": tab, "all": all_matches, "wait_ms": wait_ms,
-                  **self._locator_params(**locator)}
-        r = httpx.get(f"{self.base_url}/dom", params=params,
-                      timeout=wait_ms / 1000 + 10)
-        r.raise_for_status()
-        return r.json()
+    def quick(self, url: str) -> str:
+        """Open an ephemeral context and a tab in one call; return the tab id."""
+        ctx = self.open_context()
+        return self.open_tab(ctx["id"], url)["id"]
 
-    def text(self, tab: str, wait_ms: int = 0, **locator) -> str:
-        params = {"tab": tab, "wait_ms": wait_ms, **self._locator_params(**locator)}
-        r = httpx.get(f"{self.base_url}/text", params=params,
-                      timeout=wait_ms / 1000 + 10)
-        r.raise_for_status()
-        return r.json()
+    # -- reading -----------------------------------------------------------
 
-    def screenshot(self, tab: str, full_page: bool = False, **locator) -> Dict[str, Any]:
-        params = {"tab": tab, "full_page": "true" if full_page else "false",
-                  **self._locator_params(**locator)}
-        r = httpx.get(f"{self.base_url}/screenshot", params=params, timeout=30)
-        r.raise_for_status()
-        return r.json()
+    def snapshot(self, tab: str, mode: str = "aria", within_css: str | None = None) -> str:
+        params: dict[str, Any] = {"mode": mode}
+        if within_css:
+            params["within_css"] = within_css
+        return self._json(self._client.get(f"/tabs/{tab}/snapshot", params=params))["snapshot"]
 
-    # ---- JS execution ----
-    def execute(self, tab: str, code: str, args: Optional[List[Any]] = None) -> Any:
-        r = httpx.post(
-            f"{self.base_url}/execute",
-            json={"tab": tab, "code": code, "args": args or []},
-        )
-        r.raise_for_status()
-        return r.json()
+    def find(self, tab: str, **locator: Any) -> list[dict]:
+        return self._json(self._client.post(f"/tabs/{tab}/find", json=self._locator(locator)))[
+            "result"
+        ]
 
-    # ---- interaction ----
-    def click(self, tab: str, wait_ms: int = 0, **locator) -> str:
-        r = httpx.post(
-            f"{self.base_url}/click",
-            json={"tab": tab, "wait_ms": wait_ms, **self._locator_params(**locator)},
-            timeout=wait_ms / 1000 + 10,
-        )
-        r.raise_for_status()
-        return r.json()
+    def screenshot(self, tab: str, full_page: bool = False) -> bytes:
+        response = self._client.get(f"/tabs/{tab}/screenshot", params={"full_page": full_page})
+        response.raise_for_status()
+        return response.content
 
-    def type(
-        self, tab: str, text: str,
-        clear: bool = False, wait_ms: int = 0, **locator,
-    ) -> str:
-        r = httpx.post(
-            f"{self.base_url}/type",
-            json={"tab": tab, "text": text, "clear": clear, "wait_ms": wait_ms,
-                  **self._locator_params(**locator)},
-            timeout=wait_ms / 1000 + 10,
-        )
-        r.raise_for_status()
-        return r.json()
+    # -- acting ------------------------------------------------------------
 
-    def select(self, tab: str, value: str, wait_ms: int = 0, **locator) -> str:
-        r = httpx.post(
-            f"{self.base_url}/select",
-            json={"tab": tab, "value": value, "wait_ms": wait_ms,
-                  **self._locator_params(**locator)},
-            timeout=wait_ms / 1000 + 10,
-        )
-        r.raise_for_status()
-        return r.json()
+    def _act(self, tab: str, action: str, extra: dict, locator: dict) -> Any:
+        body = {**self._locator(locator), **extra}
+        return self._json(self._client.post(f"/tabs/{tab}/{action}", json=body))
 
-    def set_mirror(self, tab: str, enabled: bool) -> Dict[str, Any]:
-        r = httpx.post(f"{self.base_url}/mirror",
-                       json={"tab": tab, "enabled": enabled})
-        r.raise_for_status()
-        return r.json()
+    def click(self, tab: str, **locator: Any) -> Any:
+        return self._act(tab, "click", {}, locator)
 
-    def get_mirror(self, tab: str) -> Dict[str, Any]:
-        r = httpx.get(f"{self.base_url}/mirror", params={"tab": tab})
-        r.raise_for_status()
-        return r.json()
+    def type(self, tab: str, text: str, submit: bool = False, **locator: Any) -> Any:
+        return self._act(tab, "type", {"text": text, "submit": submit}, locator)
 
-    def scroll(
-        self, tab: str, block: str = "center", behavior: str = "auto",
-        wait_ms: int = 0, **locator,
-    ) -> Dict[str, Any]:
-        r = httpx.post(
-            f"{self.base_url}/scroll",
-            json={
-                "tab": tab, "block": block, "behavior": behavior,
-                "wait_ms": wait_ms, **self._locator_params(**locator),
-            },
-            timeout=wait_ms / 1000 + 10,
-        )
-        r.raise_for_status()
-        return r.json()
+    def select(self, tab: str, values: list[str], **locator: Any) -> Any:
+        return self._act(tab, "select", {"values": values}, locator)
+
+    def hover(self, tab: str, **locator: Any) -> Any:
+        return self._act(tab, "hover", {}, locator)
+
+    def scroll(self, tab: str, **locator: Any) -> Any:
+        return self._act(tab, "scroll", {}, locator)
 
     def highlight(
-        self, tab: str, color: str = "#ff3b30",
-        duration_ms: int = 2000, wait_ms: int = 0, **locator,
-    ) -> Dict[str, Any]:
-        r = httpx.post(
-            f"{self.base_url}/highlight",
-            json={
-                "tab": tab, "color": color, "duration_ms": duration_ms,
-                "wait_ms": wait_ms, **self._locator_params(**locator),
-            },
-            timeout=wait_ms / 1000 + 10,
-        )
-        r.raise_for_status()
-        return r.json()
+        self, tab: str, color: str = "#ef4444", duration_ms: int = 2000, **locator: Any
+    ) -> Any:
+        return self._act(tab, "highlight", {"color": color, "duration_ms": duration_ms}, locator)
 
     def press(
-        self, tab: str, key: str,
-        modifiers: Optional[List[str]] = None, wait_ms: int = 0, **locator,
-    ) -> Dict[str, Any]:
-        r = httpx.post(
-            f"{self.base_url}/press",
-            json={"tab": tab, "key": key, "modifiers": modifiers or [],
-                  "wait_ms": wait_ms, **self._locator_params(**locator)},
-            timeout=wait_ms / 1000 + 10,
+        self, tab: str, key: str, modifiers: list[str] | None = None, **locator: Any
+    ) -> Any:
+        body = {**self._locator(locator), "key": key, "modifiers": modifiers}
+        return self._json(self._client.post(f"/tabs/{tab}/press", json=body))
+
+    # -- control -----------------------------------------------------------
+
+    def requests(self) -> list[dict]:
+        return self._json(self._client.get("/requests"))
+
+    def events(self, context: str, since: int = 0) -> list[dict]:
+        return self._json(
+            self._client.get(f"/contexts/{context}/events", params={"since": since})
         )
-        r.raise_for_status()
-        return r.json()
+
+
+def b64decode(data: str) -> bytes:
+    return base64.b64decode(data)

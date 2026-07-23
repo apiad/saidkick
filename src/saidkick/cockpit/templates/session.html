@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ ctx.id }} — saidkick{% endblock %}
+{% block content %}
+
+{% if pending %}
+<section class="needs-you">
+  <h2>Needs you</h2>
+  <p class="reason">{{ pending.reason }}</p>
+</section>
+{% endif %}
+
+<section class="session" data-context="{{ ctx.id }}">
+  <div class="controls">
+    <select id="tab-picker">
+      {% for tab in ctx.tabs %}<option value="{{ tab.id }}">{{ tab.id }} — {{ tab.url }}</option>{% endfor %}
+    </select>
+    <button id="take">Take over</button>
+    <button id="release" disabled>Release</button>
+    <input id="paste-text" placeholder="paste text (e.g. a 2FA code)" disabled>
+    <button id="paste" disabled>Paste</button>
+    <span id="state" class="badge badge-{{ ctx.controller }}">{{ ctx.controller }}</span>
+  </div>
+  <canvas id="screen" tabindex="0"></canvas>
+  <p class="meta" id="hint">Watching. Click “Take over” to drive.</p>
+</section>
+
+{% endblock %}
+{% block scripts %}<script src="/static/cockpit.js"></script>{% endblock %}

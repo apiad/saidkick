@@ -1,547 +1,340 @@
-import base64
-import logging
-import sys
-from typing import List, Optional
+"""The saidkick CLI.
 
+``saidkick serve`` runs the daemon and renders a live dashboard in the terminal
+it was started from — that is the first of the three ways a pending human
+request reaches a person. Everything else is a thin wrapper over the REST API.
+"""
+
+import asyncio
+import sys
+from typing import Optional
+
+import httpx
 import typer
 import uvicorn
 from rich.console import Console
-from rich.logging import RichHandler
-from rich.theme import Theme
 
 from saidkick.client import SaidkickClient
 
-app = typer.Typer(help="Saidkick Dev Tool CLI")
-console = Console(
-    theme=Theme({
-        "info": "cyan", "warning": "yellow", "error": "red", "success": "green",
-        "status": "blue", "cmd": "magenta", "browser": "white",
-    })
-)
-client = SaidkickClient()
+app = typer.Typer(help="saidkick — a browser for agents, supervised by humans.", no_args_is_help=True)
+console = Console()
+err_console = Console(stderr=True)
 
 
-def handle_client_error(e: Exception):
-    import httpx
-    if isinstance(e, httpx.ConnectError):
-        console.print("[error]Error: Saidkick server is not running.[/error]")
-    elif isinstance(e, httpx.HTTPStatusError):
+def _client() -> SaidkickClient:
+    return SaidkickClient()
+
+
+def handle_client_error(exc: Exception) -> None:
+    if isinstance(exc, httpx.ConnectError):
+        err_console.print("[red]saidkick is not running.[/red] Start it with: saidkick serve")
+    elif isinstance(exc, httpx.HTTPStatusError):
         try:
-            detail = e.response.json().get("detail", str(e))
+            body = exc.response.json()
+            detail = f"{body.get('error', 'error')}: {body.get('detail', '')}"
         except Exception:
-            detail = str(e)
-        console.print(f"[error]Error: {detail}[/error]")
+            detail = str(exc)
+        err_console.print(f"[red]{detail}[/red]")
     else:
-        console.print(f"[error]Error: {e}[/error]")
+        err_console.print(f"[red]{exc}[/red]")
     raise typer.Exit(1)
 
 
-def _locator_kwargs(
-    css: Optional[str], xpath: Optional[str],
-    by_text: Optional[str], by_label: Optional[str], by_placeholder: Optional[str],
-    within_css: Optional[str], nth: Optional[int],
-    exact: bool, regex: bool,
-    by_role: Optional[str] = None, pierce_shadow: bool = False,
-):
-    return dict(
-        css=css, xpath=xpath,
-        by_text=by_text, by_label=by_label, by_placeholder=by_placeholder,
-        by_role=by_role, pierce_shadow=pierce_shadow,
-        within_css=within_css, nth=nth, exact=exact, regex=regex,
-    )
+def _locator(
+    css: Optional[str] = None,
+    xpath: Optional[str] = None,
+    by_text: Optional[str] = None,
+    by_label: Optional[str] = None,
+    by_placeholder: Optional[str] = None,
+    by_role: Optional[str] = None,
+    within_css: Optional[str] = None,
+    nth: Optional[int] = None,
+    exact: bool = False,
+    regex: bool = False,
+    wait_ms: int = 0,
+) -> dict:
+    return {
+        "css": css,
+        "xpath": xpath,
+        "by_text": by_text,
+        "by_label": by_label,
+        "by_placeholder": by_placeholder,
+        "by_role": by_role,
+        "within_css": within_css,
+        "nth": nth,
+        "exact": exact,
+        "regex": regex,
+        "wait_ms": wait_ms,
+    }
+
+
+# Shared locator options, declared once so every verb accepts the same vocabulary.
+CSS = typer.Option(None, "--css")
+XPATH = typer.Option(None, "--xpath")
+BY_TEXT = typer.Option(None, "--by-text")
+BY_LABEL = typer.Option(None, "--by-label")
+BY_PLACEHOLDER = typer.Option(None, "--by-placeholder")
+BY_ROLE = typer.Option(None, "--by-role")
+WITHIN = typer.Option(None, "--within-css")
+NTH = typer.Option(None, "--nth")
+EXACT = typer.Option(False, "--exact")
+REGEX = typer.Option(False, "--regex")
+WAIT_MS = typer.Option(0, "--wait-ms")
+TAB = typer.Option(..., "--tab")
 
 
 @app.command()
-def start(
-    host: str = typer.Option(
-        "127.0.0.1", "--host",
-        help="Bind address. Default 127.0.0.1 (localhost-only). "
-             "Use '0.0.0.0' to expose on LAN — anyone who can reach this port "
-             "can run arbitrary JS in your logged-in browser tabs.",
-    ),
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(6992, "--port"),
-    reload: bool = typer.Option(False, "--reload", help="Auto-reload for development."),
+    headless: bool = typer.Option(True, "--headless/--headful"),
+    quiet: bool = typer.Option(False, "--quiet", help="Plain logs instead of the dashboard."),
 ):
-    """Start the Saidkick FastAPI server."""
-    logging.basicConfig(
-        level="INFO", format="%(message)s", datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True, console=console)],
-    )
-    logging.getLogger("saidkick").setLevel(logging.INFO)
-    if host == "0.0.0.0":
-        console.print(
-            "[warning]⚠  host=0.0.0.0 exposes saidkick on every interface. "
-            "Anyone who can reach this port can drive your browser. "
-            "Use 127.0.0.1 (default) unless you intend LAN/remote access.[/warning]"
-        )
-    uvicorn.run("saidkick.server:app", host=host, port=port, reload=reload, log_level="info")
+    """Run the daemon: browser engine, REST, MCP at /mcp, and the cockpit."""
+    from saidkick.api import create_app
+    from saidkick.control import Controller
+    from saidkick.dashboard import run_dashboard
+    from saidkick.engine import Engine
+    from saidkick.events import EventBus
+    from saidkick.mcp_server import build_mcp
+
+    controller = Controller(cockpit_base=f"http://{host}:{port}")
+    engine = Engine(headless=headless, controller=controller)
+    events = EventBus()
+    mcp = build_mcp(engine, controller, events)
+    api = create_app(engine, controller, events, mcp=mcp)
+
+    async def main():
+        await engine.start()
+        config = uvicorn.Config(api, host=host, port=port, log_level="warning" if not quiet else "info")
+        server = uvicorn.Server(config)
+        console.print(f"[green]saidkick[/green] on http://{host}:{port}  ·  cockpit /  ·  MCP /mcp")
+        tasks = [asyncio.create_task(server.serve())]
+        if not quiet:
+            tasks.append(asyncio.create_task(run_dashboard(engine, controller)))
+        try:
+            await tasks[0]
+        finally:
+            for task in tasks[1:]:
+                task.cancel()
+            await engine.stop()
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:  # pragma: no cover
+        pass
 
 
 @app.command()
-def logs(
-    limit: int = typer.Option(100, "--limit", "-n"),
-    grep: str = typer.Option(None, "--grep", "-g"),
-    browser: str = typer.Option(None, "--browser"),
+def contexts():
+    """List live browsing contexts."""
+    try:
+        for ctx in _client().list_contexts():
+            console.print(f"{ctx['id']}  {ctx['controller']:<6} {len(ctx['tabs'])} tab(s)")
+    except Exception as exc:
+        handle_client_error(exc)
+
+
+@app.command()
+def tabs(context: str = typer.Option(..., "--context")):
+    """List tabs in a context."""
+    try:
+        for tab in _client().list_tabs(context):
+            console.print(f"{tab['id']}  {tab['url']}")
+    except Exception as exc:
+        handle_client_error(exc)
+
+
+@app.command()
+def quick(url: str):
+    """Open an ephemeral context and a tab in one call; print the tab id."""
+    try:
+        print(_client().quick(url))
+    except Exception as exc:
+        handle_client_error(exc)
+
+
+@app.command("open")
+def open_cmd(url: str, context: str = typer.Option(..., "--context")):
+    """Open a tab in an existing context; print the tab id."""
+    try:
+        print(_client().open_tab(context, url)["id"])
+    except Exception as exc:
+        handle_client_error(exc)
+
+
+@app.command()
+def close(tab: str = TAB):
+    """Close a tab."""
+    try:
+        _client().close_tab(tab)
+    except Exception as exc:
+        handle_client_error(exc)
+
+
+@app.command()
+def navigate(url: str, tab: str = TAB, wait: str = typer.Option("load", "--wait")):
+    """Point a tab at a URL."""
+    try:
+        _client().navigate(tab, url, wait=wait)
+    except Exception as exc:
+        handle_client_error(exc)
+
+
+@app.command()
+def snapshot(
+    tab: str = TAB,
+    mode: str = typer.Option("aria", "--mode", help="aria | text | html"),
+    within_css: Optional[str] = WITHIN,
 ):
-    """Fetch console logs."""
+    """Read the page. 'aria' is compact and maps onto locators."""
     try:
-        for log in client.get_logs(limit=limit, grep=grep, browser=browser):
-            level = log.get("level", "info").upper()
-            console.print(f"[browser]{log.get('browser_id','')} {level}: {log.get('data')}[/browser]")
-    except Exception as e:
-        handle_client_error(e)
-
-
-@app.command()
-def doctor():
-    """Report server/browser connection state and the exact next action."""
-    try:
-        d = client.doctor()
-    except Exception as e:
-        handle_client_error(e)
-        return
-    console.print(f"server: [success]{d['server']}[/success]  state: {d['state']}")
-    for b in d["browsers"]:
-        tabs = b["tabs"] if b["tabs"] is not None else "?"
-        console.print(f"  [cmd]{b['id']}[/cmd]  tabs: {tabs}")
-    console.print(f"[info]{d['hint']}[/info]")
-
-
-@app.command()
-def tabs(active: bool = typer.Option(False, "--active")):
-    """List tabs across connected browsers."""
-    try:
-        entries = client.list_tabs(active=active)
-        if not entries:
-            d = client.doctor()
-            if d["state"] == "connected":
-                ids = ", ".join(b["id"] for b in d["browsers"])
-                console.print(f"[warning]0 tabs, but connected: {ids}. "
-                              f"Use `saidkick open --browser <id> <url>`.[/warning]")
-            else:
-                console.print(f"[warning]{d['hint']}[/warning]")
-            return
-        for e in entries:
-            marker = "  [success](active)[/success]" if e.get("active") else ""
-            console.print(
-                f"[cmd]{e['tab']}[/cmd]  {e.get('url') or ''}  "
-                f"[info]\"{e.get('title') or ''}\"[/info]{marker}"
-            )
-    except Exception as e:
-        handle_client_error(e)
+        print(_client().snapshot(tab, mode=mode, within_css=within_css))
+    except Exception as exc:
+        handle_client_error(exc)
 
 
 @app.command()
 def find(
-    tab: str = typer.Option(..., "--tab"),
-    css: str = typer.Option(None, "--css"),
-    xpath: str = typer.Option(None, "--xpath"),
-    by_text: str = typer.Option(None, "--by-text"),
-    by_label: str = typer.Option(None, "--by-label"),
-    by_placeholder: str = typer.Option(None, "--by-placeholder"),
-    by_role: str = typer.Option(None, "--by-role"),
-    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
-    within_css: str = typer.Option(None, "--within-css"),
-    nth: int = typer.Option(None, "--nth"),
-    exact: bool = typer.Option(False, "--exact"),
-    regex: bool = typer.Option(False, "--regex"),
-    wait_ms: int = typer.Option(0, "--wait-ms"),
+    tab: str = TAB, css: Optional[str] = CSS, xpath: Optional[str] = XPATH,
+    by_text: Optional[str] = BY_TEXT, by_label: Optional[str] = BY_LABEL,
+    by_placeholder: Optional[str] = BY_PLACEHOLDER, by_role: Optional[str] = BY_ROLE,
+    within_css: Optional[str] = WITHIN, nth: Optional[int] = NTH,
+    exact: bool = EXACT, regex: bool = REGEX, wait_ms: int = WAIT_MS,
 ):
-    """Return JSON list of locator matches (debug aid)."""
+    """Describe matching elements without acting on them."""
     try:
-        import json
-        out = client.find(
-            tab=tab, wait_ms=wait_ms,
-            **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex,
-                              by_role=by_role, pierce_shadow=pierce_shadow),
-        )
-        sys.stdout.write(json.dumps(out, indent=2))
-        sys.stdout.write("\n")
-    except Exception as e:
-        handle_client_error(e)
-
-
-@app.command()
-def dom(
-    tab: str = typer.Option(..., "--tab"),
-    css: str = typer.Option(None, "--css"),
-    xpath: str = typer.Option(None, "--xpath"),
-    by_text: str = typer.Option(None, "--by-text"),
-    by_label: str = typer.Option(None, "--by-label"),
-    by_placeholder: str = typer.Option(None, "--by-placeholder"),
-    by_role: str = typer.Option(None, "--by-role"),
-    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
-    within_css: str = typer.Option(None, "--within-css"),
-    nth: int = typer.Option(None, "--nth"),
-    exact: bool = typer.Option(False, "--exact"),
-    regex: bool = typer.Option(False, "--regex"),
-    all_matches: bool = typer.Option(False, "--all"),
-    wait_ms: int = typer.Option(0, "--wait-ms"),
-):
-    """Get DOM of the matched element(s)."""
-    try:
-        out = client.get_dom(
-            tab=tab, all_matches=all_matches, wait_ms=wait_ms,
-            **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex,
-                              by_role=by_role, pierce_shadow=pierce_shadow),
-        )
-        sys.stdout.write(str(out)); sys.stdout.write("\n")
-    except Exception as e:
-        handle_client_error(e)
-
-
-@app.command()
-def text(
-    tab: str = typer.Option(..., "--tab"),
-    css: str = typer.Option(None, "--css"),
-    xpath: str = typer.Option(None, "--xpath"),
-    by_text: str = typer.Option(None, "--by-text"),
-    by_label: str = typer.Option(None, "--by-label"),
-    by_placeholder: str = typer.Option(None, "--by-placeholder"),
-    by_role: str = typer.Option(None, "--by-role"),
-    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
-    within_css: str = typer.Option(None, "--within-css"),
-    nth: int = typer.Option(None, "--nth"),
-    exact: bool = typer.Option(False, "--exact"),
-    regex: bool = typer.Option(False, "--regex"),
-    wait_ms: int = typer.Option(0, "--wait-ms"),
-):
-    """Print innerText of the tab or a located element."""
-    try:
-        out = client.text(
-            tab=tab, wait_ms=wait_ms,
-            **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex,
-                              by_role=by_role, pierce_shadow=pierce_shadow),
-        )
-        sys.stdout.write(str(out)); sys.stdout.write("\n")
-    except Exception as e:
-        handle_client_error(e)
+        loc = _locator(css, xpath, by_text, by_label, by_placeholder, by_role,
+                       within_css, nth, exact, regex, wait_ms)
+        for el in _client().find(tab, **loc):
+            console.print(f"{el['tag']:<10} {el.get('text', '')[:60]}")
+    except Exception as exc:
+        handle_client_error(exc)
 
 
 @app.command()
 def click(
-    tab: str = typer.Option(..., "--tab"),
-    css: str = typer.Option(None, "--css"),
-    xpath: str = typer.Option(None, "--xpath"),
-    by_text: str = typer.Option(None, "--by-text"),
-    by_label: str = typer.Option(None, "--by-label"),
-    by_placeholder: str = typer.Option(None, "--by-placeholder"),
-    by_role: str = typer.Option(None, "--by-role"),
-    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
-    within_css: str = typer.Option(None, "--within-css"),
-    nth: int = typer.Option(None, "--nth"),
-    exact: bool = typer.Option(False, "--exact"),
-    regex: bool = typer.Option(False, "--regex"),
-    wait_ms: int = typer.Option(0, "--wait-ms"),
+    tab: str = TAB, css: Optional[str] = CSS, xpath: Optional[str] = XPATH,
+    by_text: Optional[str] = BY_TEXT, by_label: Optional[str] = BY_LABEL,
+    by_placeholder: Optional[str] = BY_PLACEHOLDER, by_role: Optional[str] = BY_ROLE,
+    within_css: Optional[str] = WITHIN, nth: Optional[int] = NTH,
+    exact: bool = EXACT, regex: bool = REGEX, wait_ms: int = WAIT_MS,
 ):
-    """Click a located element."""
+    """Click an element."""
     try:
-        out = client.click(
-            tab=tab, wait_ms=wait_ms,
-            **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex,
-                              by_role=by_role, pierce_shadow=pierce_shadow),
-        )
-        console.print(f"[success]{out}[/success]")
-    except Exception as e:
-        handle_client_error(e)
+        loc = _locator(css, xpath, by_text, by_label, by_placeholder, by_role,
+                       within_css, nth, exact, regex, wait_ms)
+        _client().click(tab, **loc)
+    except Exception as exc:
+        handle_client_error(exc)
 
 
-@app.command()
-def type(
-    text: str = typer.Argument(...),
-    tab: str = typer.Option(..., "--tab"),
-    css: str = typer.Option(None, "--css"),
-    xpath: str = typer.Option(None, "--xpath"),
-    by_text: str = typer.Option(None, "--by-text"),
-    by_label: str = typer.Option(None, "--by-label"),
-    by_placeholder: str = typer.Option(None, "--by-placeholder"),
-    by_role: str = typer.Option(None, "--by-role"),
-    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
-    within_css: str = typer.Option(None, "--within-css"),
-    nth: int = typer.Option(None, "--nth"),
-    exact: bool = typer.Option(False, "--exact"),
-    regex: bool = typer.Option(False, "--regex"),
-    clear: bool = typer.Option(False, "--clear"),
-    wait_ms: int = typer.Option(0, "--wait-ms"),
+@app.command("type")
+def type_cmd(
+    text: str, tab: str = TAB, submit: bool = typer.Option(False, "--submit"),
+    css: Optional[str] = CSS, xpath: Optional[str] = XPATH,
+    by_text: Optional[str] = BY_TEXT, by_label: Optional[str] = BY_LABEL,
+    by_placeholder: Optional[str] = BY_PLACEHOLDER, by_role: Optional[str] = BY_ROLE,
+    within_css: Optional[str] = WITHIN, nth: Optional[int] = NTH,
+    exact: bool = EXACT, regex: bool = REGEX, wait_ms: int = WAIT_MS,
 ):
-    """Type into a located element (contenteditable-aware)."""
+    """Type into a field, including rich-text editors."""
     try:
-        out = client.type(
-            tab=tab, text=text, clear=clear, wait_ms=wait_ms,
-            **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex,
-                              by_role=by_role, pierce_shadow=pierce_shadow),
-        )
-        console.print(f"[success]{out}[/success]")
-    except Exception as e:
-        handle_client_error(e)
+        loc = _locator(css, xpath, by_text, by_label, by_placeholder, by_role,
+                       within_css, nth, exact, regex, wait_ms)
+        _client().type(tab, text, submit=submit, **loc)
+    except Exception as exc:
+        handle_client_error(exc)
 
 
 @app.command()
 def select(
-    value: str = typer.Argument(...),
-    tab: str = typer.Option(..., "--tab"),
-    css: str = typer.Option(None, "--css"),
-    xpath: str = typer.Option(None, "--xpath"),
-    by_text: str = typer.Option(None, "--by-text"),
-    by_label: str = typer.Option(None, "--by-label"),
-    by_placeholder: str = typer.Option(None, "--by-placeholder"),
-    by_role: str = typer.Option(None, "--by-role"),
-    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
-    within_css: str = typer.Option(None, "--within-css"),
-    nth: int = typer.Option(None, "--nth"),
-    exact: bool = typer.Option(False, "--exact"),
-    regex: bool = typer.Option(False, "--regex"),
-    wait_ms: int = typer.Option(0, "--wait-ms"),
+    value: str, tab: str = TAB, css: Optional[str] = CSS, xpath: Optional[str] = XPATH,
+    by_label: Optional[str] = BY_LABEL, within_css: Optional[str] = WITHIN,
+    nth: Optional[int] = NTH, wait_ms: int = WAIT_MS,
 ):
-    """Select an option in a <select>."""
+    """Choose an <option>."""
     try:
-        out = client.select(
-            tab=tab, value=value, wait_ms=wait_ms,
-            **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex,
-                              by_role=by_role, pierce_shadow=pierce_shadow),
-        )
-        console.print(f"[success]{out}[/success]")
-    except Exception as e:
-        handle_client_error(e)
-
-
-@app.command()
-def mirror(
-    state: str = typer.Argument(..., help="on | off | status"),
-    tab: str = typer.Option(..., "--tab"),
-):
-    """Toggle per-tab console-log mirroring (off by default as of 0.5.0)."""
-    try:
-        if state == "on":
-            out = client.set_mirror(tab=tab, enabled=True)
-        elif state == "off":
-            out = client.set_mirror(tab=tab, enabled=False)
-        elif state == "status":
-            out = client.get_mirror(tab=tab)
-        else:
-            console.print("[error]state must be on | off | status[/error]")
-            raise typer.Exit(1)
-        console.print(f"[success]{out}[/success]")
-    except Exception as e:
-        handle_client_error(e)
-
-
-@app.command()
-def scroll(
-    tab: str = typer.Option(..., "--tab"),
-    css: str = typer.Option(None, "--css"),
-    xpath: str = typer.Option(None, "--xpath"),
-    by_text: str = typer.Option(None, "--by-text"),
-    by_label: str = typer.Option(None, "--by-label"),
-    by_placeholder: str = typer.Option(None, "--by-placeholder"),
-    by_role: str = typer.Option(None, "--by-role"),
-    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
-    within_css: str = typer.Option(None, "--within-css"),
-    nth: int = typer.Option(None, "--nth"),
-    exact: bool = typer.Option(False, "--exact"),
-    regex: bool = typer.Option(False, "--regex"),
-    block: str = typer.Option("center", "--block", help="start | center | end | nearest"),
-    behavior: str = typer.Option("auto", "--behavior", help="auto | smooth"),
-    wait_ms: int = typer.Option(0, "--wait-ms"),
-):
-    """Scroll a located element into view."""
-    try:
-        out = client.scroll(
-            tab=tab, block=block, behavior=behavior, wait_ms=wait_ms,
-            **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex,
-                              by_role=by_role, pierce_shadow=pierce_shadow),
-        )
-        console.print(f"[success]{out}[/success]")
-    except Exception as e:
-        handle_client_error(e)
-
-
-@app.command()
-def highlight(
-    tab: str = typer.Option(..., "--tab"),
-    css: str = typer.Option(None, "--css"),
-    xpath: str = typer.Option(None, "--xpath"),
-    by_text: str = typer.Option(None, "--by-text"),
-    by_label: str = typer.Option(None, "--by-label"),
-    by_placeholder: str = typer.Option(None, "--by-placeholder"),
-    by_role: str = typer.Option(None, "--by-role"),
-    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
-    within_css: str = typer.Option(None, "--within-css"),
-    nth: int = typer.Option(None, "--nth"),
-    exact: bool = typer.Option(False, "--exact"),
-    regex: bool = typer.Option(False, "--regex"),
-    color: str = typer.Option("#ff3b30", "--color", help="Any CSS color"),
-    duration_ms: int = typer.Option(2000, "--duration-ms", help="0 = persist until page reload"),
-    wait_ms: int = typer.Option(0, "--wait-ms"),
-):
-    """Draw a temporary ring around a located element — point the user at it."""
-    try:
-        out = client.highlight(
-            tab=tab, color=color, duration_ms=duration_ms, wait_ms=wait_ms,
-            **_locator_kwargs(css, xpath, by_text, by_label, by_placeholder,
-                              within_css, nth, exact, regex,
-                              by_role=by_role, pierce_shadow=pierce_shadow),
-        )
-        console.print(f"[success]{out}[/success]")
-    except Exception as e:
-        handle_client_error(e)
+        loc = _locator(css, xpath, None, by_label, None, None, within_css, nth, False, False, wait_ms)
+        _client().select(tab, [value], **loc)
+    except Exception as exc:
+        handle_client_error(exc)
 
 
 @app.command()
 def press(
-    key: str = typer.Argument(..., help="Enter, Escape, Tab, a, ArrowDown, ..."),
-    tab: str = typer.Option(..., "--tab"),
-    mod: List[str] = typer.Option([], "--mod", help="ctrl,shift,alt,meta (comma or repeated)"),
-    css: str = typer.Option(None, "--css"),
-    by_text: str = typer.Option(None, "--by-text"),
-    by_label: str = typer.Option(None, "--by-label"),
-    by_placeholder: str = typer.Option(None, "--by-placeholder"),
-    by_role: str = typer.Option(None, "--by-role"),
-    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
-    within_css: str = typer.Option(None, "--within-css"),
-    nth: int = typer.Option(None, "--nth"),
-    wait_ms: int = typer.Option(0, "--wait-ms"),
+    key: str, tab: str = TAB,
+    modifier: list[str] = typer.Option([], "--mod"),
+    css: Optional[str] = CSS, by_label: Optional[str] = BY_LABEL,
+    by_text: Optional[str] = BY_TEXT, wait_ms: int = WAIT_MS,
 ):
-    """Press a key. Pass a locator (--css/--by-text/...) so the element is
-    focused first — without one, focus is best-effort and may no-op on some
-    pages; pair a bare press with a prior `click` on the target."""
-    mods: List[str] = []
-    for entry in mod:
-        for part in entry.split(","):
-            part = part.strip()
-            if part:
-                mods.append(part)
+    """Dispatch a real keyboard event."""
     try:
-        out = client.press(
-            tab=tab, key=key, modifiers=mods, wait_ms=wait_ms,
-            **_locator_kwargs(css, None, by_text, by_label, by_placeholder,
-                              within_css, nth, False, False),
-        )
-        console.print(f"[success]{out}[/success]")
-    except Exception as e:
-        handle_client_error(e)
+        loc = _locator(css, None, by_text, by_label, None, None, None, None, False, False, wait_ms)
+        _client().press(tab, key, modifiers=list(modifier), **loc)
+    except Exception as exc:
+        handle_client_error(exc)
+
+
+@app.command()
+def scroll(
+    tab: str = TAB, css: Optional[str] = CSS, by_text: Optional[str] = BY_TEXT,
+    by_label: Optional[str] = BY_LABEL, wait_ms: int = WAIT_MS,
+):
+    """Scroll an element into view."""
+    try:
+        loc = _locator(css, None, by_text, by_label, None, None, None, None, False, False, wait_ms)
+        _client().scroll(tab, **loc)
+    except Exception as exc:
+        handle_client_error(exc)
+
+
+@app.command()
+def highlight(
+    tab: str = TAB, color: str = typer.Option("#ef4444", "--color"),
+    duration_ms: int = typer.Option(2000, "--duration-ms"),
+    css: Optional[str] = CSS, by_text: Optional[str] = BY_TEXT,
+    by_label: Optional[str] = BY_LABEL, wait_ms: int = WAIT_MS,
+):
+    """Ring an element so a human can see what you mean."""
+    try:
+        loc = _locator(css, None, by_text, by_label, None, None, None, None, False, False, wait_ms)
+        _client().highlight(tab, color=color, duration_ms=duration_ms, **loc)
+    except Exception as exc:
+        handle_client_error(exc)
 
 
 @app.command()
 def screenshot(
-    tab: str = typer.Option(..., "--tab"),
-    css: str = typer.Option(None, "--css"),
-    by_text: str = typer.Option(None, "--by-text"),
-    by_label: str = typer.Option(None, "--by-label"),
-    by_placeholder: str = typer.Option(None, "--by-placeholder"),
-    by_role: str = typer.Option(None, "--by-role"),
-    pierce_shadow: bool = typer.Option(False, "--pierce-shadow"),
-    within_css: str = typer.Option(None, "--within-css"),
-    nth: int = typer.Option(None, "--nth"),
+    tab: str = TAB,
+    output: Optional[str] = typer.Option(None, "--output"),
     full_page: bool = typer.Option(False, "--full-page"),
-    output: str = typer.Option(None, "--output"),
 ):
-    """Capture a PNG. Default: stdout raw bytes. --output to write to file."""
+    """Capture a PNG. Writes to --output, or raw bytes to stdout."""
     try:
-        result = client.screenshot(
-            tab=tab, full_page=full_page,
-            **_locator_kwargs(css, None, by_text, by_label, by_placeholder,
-                              within_css, nth, False, False),
-        )
-        data = base64.b64decode(result["png_base64"])
+        png = _client().screenshot(tab, full_page=full_page)
         if output:
-            with open(output, "wb") as f:
-                f.write(data)
-            console.print(f"[success]Wrote {len(data)} bytes to {output}[/success]")
+            with open(output, "wb") as handle:
+                handle.write(png)
+            console.print(f"wrote {len(png)} bytes to {output}")
         else:
-            sys.stdout.buffer.write(data)
-    except Exception as e:
-        handle_client_error(e)
+            sys.stdout.buffer.write(png)
+    except Exception as exc:
+        handle_client_error(exc)
 
 
 @app.command()
-def close(tab: str = typer.Option(..., "--tab")):
-    """Close a tab."""
+def requests():
+    """Show pending human requests."""
     try:
-        out = client.close(tab=tab)
-        console.print(f"[success]closed {out.get('closed')}[/success]")
-    except Exception as e:
-        handle_client_error(e)
+        pending = _client().requests()
+        if not pending:
+            console.print("[dim]nothing pending[/dim]")
+        for req in pending:
+            console.print(f"{req['context']}  {req['reason']}  ({req['remaining_s']:.0f}s left)")
+    except Exception as exc:
+        handle_client_error(exc)
 
 
-@app.command()
-def navigate(
-    url: str = typer.Argument(...),
-    tab: str = typer.Option(..., "--tab"),
-    wait: str = typer.Option("dom", "--wait"),
-    timeout_ms: int = typer.Option(15000, "--timeout-ms"),
-):
-    """Navigate a tab to URL."""
-    try:
-        out = client.navigate(tab=tab, url=url, wait=wait, timeout_ms=timeout_ms)
-        sys.stdout.write(out.get("url", "")); sys.stdout.write("\n")
-    except Exception as e:
-        handle_client_error(e)
-
-
-@app.command("open")
-def open_cmd(
-    url: str = typer.Argument(...),
-    browser: str = typer.Option(..., "--browser"),
-    wait: str = typer.Option("dom", "--wait"),
-    timeout_ms: int = typer.Option(15000, "--timeout-ms"),
-    activate: bool = typer.Option(False, "--activate"),
-):
-    """Open URL in new tab."""
-    try:
-        out = client.open(browser=browser, url=url, wait=wait,
-                          timeout_ms=timeout_ms, activate=activate)
-        sys.stdout.write(out.get("tab", "")); sys.stdout.write("\n")
-    except Exception as e:
-        handle_client_error(e)
-
-
-@app.command()
-def exec(
-    tab: str = typer.Option(..., "--tab"),
-    code: Optional[str] = typer.Argument(None),
-    arg: List[str] = typer.Option(
-        [], "--arg",
-        help="Value passed to the code; repeat for multiple. Read via "
-             "args[0], args[1], ... Each is JSON-parsed, else kept as a raw string.",
-    ),
-):
-    """Execute JS in tab. Must 'return' a value to see it (0.4.0 breaking change).
-
-    Pass values with --arg (repeatable); read them in your code via the `args`
-    array — args[0], args[1], ..."""
-    if code is None:
-        if sys.stdin.isatty():
-            console.print("[warning]Waiting for JS from stdin... (Ctrl+D to finish)[/warning]")
-        code = sys.stdin.read()
-    if not code or not code.strip():
-        console.print("[error]Error: No code provided.[/error]")
-        raise typer.Exit(1)
-    import json as _json
-    parsed_args = []
-    for a in arg:
-        try:
-            parsed_args.append(_json.loads(a))
-        except (ValueError, TypeError):
-            parsed_args.append(a)
-    try:
-        result = client.execute(tab=tab, code=code, args=parsed_args)
-        if isinstance(result, (dict, list)):
-            import json
-            sys.stdout.write(json.dumps(result))
-        else:
-            sys.stdout.write(str(result) if result is not None else "")
-        sys.stdout.write("\n")
-    except Exception as e:
-        handle_client_error(e)
-
-
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     app()

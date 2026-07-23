@@ -139,6 +139,10 @@ class Engine:
         self._browser: Browser | None = None
         self._contexts: dict[str, ManagedContext] = {}
 
+    @property
+    def is_running(self) -> bool:
+        return self._browser is not None
+
     async def start(self) -> None:
         if self._pw is not None:
             return
