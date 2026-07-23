@@ -14,6 +14,19 @@ Chromium — verified: Chromium does not lock a headless user-data-dir.
 
 **Tech Stack:** unchanged. `SAIDKICK_HOME` overrides the profile root (default `~/.saidkick`).
 
+
+**Status:** COMPLETE — 2026-07-23. All 4 tasks on `main`; gate green (ruff clean,
+115 non-browser + 122 browser). Released 2.2.0. Driven live headful: set a real
+cookie on profile 'demo', save_profile captured it, a fresh seeded context read
+`session=alex-42` back from httpbin while an anonymous context was empty;
+attached ProfileLocked returned 409 on the second open.
+
+**Deviations:**
+1. `ProfileLocked` is daemon-enforced, not OS-enforced — the probe found Chromium
+   does not lock a headless user-data-dir (spec §3 corrected before the plan).
+2. Fixed a CLI display bug surfaced by the live demo: `[ephemeral:github]` in the
+   contexts listing was swallowed by Rich as console markup; switched to parens.
+
 **Spec:** §3 (Profile / Context), §7 (`save_profile`), §12 (bootstrapping). Every mechanism
 probe-verified on Playwright 1.61.
 
@@ -56,11 +69,11 @@ Inherits prior slices'. New:
   - `delete(name) -> None`.
   - Name validation: `[a-zA-Z0-9_-]+`, else `ValueError` (no path traversal).
 
-- [ ] **Step 1: failing tests** — validation rejects `../x` and `a/b`; `save_state`+`load_state`
+- [x] **Step 1: failing tests** — validation rejects `../x` and `a/b`; `save_state`+`load_state`
   round-trips; `load_state` of an unknown profile is `None`; `list` reports `has_state` after a
   save; `delete` removes it; the root honours `SAIDKICK_HOME` (monkeypatched to tmp).
-- [ ] **Step 2–4:** run/implement/run.
-- [ ] **Step 5:** commit `feat(profiles): on-disk profile store`.
+- [x] **Step 2–4:** run/implement/run.
+- [x] **Step 5:** commit `feat(profiles): on-disk profile store`.
 
 ---
 
@@ -83,7 +96,7 @@ Inherits prior slices'. New:
 - `close_context` releases the attach lock; `stop()` closes attached contexts (which own their
   browser — verified `pc.browser is not None`, and `ctx.close()` tears the browser down).
 
-- [ ] **Step 1: failing tests** (browser):
+- [x] **Step 1: failing tests** (browser):
   - ephemeral+profile seeded: mint state via `save_profile`, open a fresh ephemeral context on
     that profile, assert a cookie/localStorage value is present.
   - `save_profile` from an ephemeral context writes a state file (`store.load_state` non-None).
@@ -93,10 +106,10 @@ Inherits prior slices'. New:
   - releasing (close) the first attached context lets a subsequent attached open succeed.
   - `attached` with no profile → `ValueError`.
   - a closed attached context's initial blank page is not leaked into `list_tabs`.
-- [ ] **Step 2–4:** run/implement/run. For attached, adopt the persistent context's initial page
+- [x] **Step 2–4:** run/implement/run. For attached, adopt the persistent context's initial page
   as the first tab (or close it) so `list_tabs` stays truthful. Track
   `self._attached: dict[str, str]` (profile → ctx_id); set on open, clear on close.
-- [ ] **Step 5:** commit `feat(engine): profile-backed contexts and save_profile`.
+- [x] **Step 5:** commit `feat(engine): profile-backed contexts and save_profile`.
 
 ---
 
@@ -115,22 +128,22 @@ Inherits prior slices'. New:
 - CLI: `saidkick profiles`, `saidkick save-profile --context C --name N`; `open`/`quick` unchanged;
   `contexts` shows the profile column. `SaidkickClient.list_profiles/save_profile`.
 
-- [ ] **Step 1: failing tests** — `list_profiles` + `save_profile` MCP tools registered with real
+- [x] **Step 1: failing tests** — `list_profiles` + `save_profile` MCP tools registered with real
   descriptions stating attached-writes-back and ephemeral-omits-IndexedDB; a REST round-trip that
   saves a profile and lists it; `saidkick profiles --help` exits 0.
-- [ ] **Step 2–4:** run/implement/run.
-- [ ] **Step 5:** commit `feat(profiles): REST/MCP/CLI surface`.
+- [x] **Step 2–4:** run/implement/run.
+- [x] **Step 5:** commit `feat(profiles): REST/MCP/CLI surface`.
 
 ---
 
 ### Task 4: Gate, docs, release 2.2.0
 
-- [ ] **Step 1: full gate**, each its own step, check each rc:
+- [x] **Step 1: full gate**, each its own step, check each rc:
   `uvx ruff check src tests` · `uv run pytest -m "not browser" -q` · `uv run pytest -m browser -q`.
-- [ ] **Step 2:** README "Profiles" section (the bootstrapping loop: ephemeral → login wall →
+- [x] **Step 2:** README "Profiles" section (the bootstrapping loop: ephemeral → login wall →
   request_human → takeover → save_profile → durable); the attached-vs-ephemeral table; SKILL.md
   note on when to use `attached` vs seeded ephemeral. CHANGELOG 2.2.0; bump version.
-- [ ] **Step 3:** commit `feat(profiles): docs and 2.2.0`.
+- [x] **Step 3:** commit `feat(profiles): docs and 2.2.0`.
 
 ---
 
