@@ -99,7 +99,7 @@ Any task whose implementation approach is *not* obvious from its tests carries t
 
 # VS1 — agent drives, human watches
 
-## Task 1: Test scaffolding and the fixture site
+### Task 1: Test scaffolding and the fixture site
 
 **Files:**
 - Modify: `pyproject.toml`
@@ -116,8 +116,12 @@ Any task whose implementation approach is *not* obvious from its tests carries t
 
 - [ ] **Step 1: Update dependencies and markers**
 
-In `pyproject.toml`, add to `dependencies`: `playwright>=1.61`, `mcp>=1.28`, `jinja2>=3.1`.
-Replace the `e2e` marker with `browser`:
+```bash
+uv add 'playwright>=1.61' 'mcp>=1.28' 'jinja2>=3.1'
+uv remove websockets   # only the extension socket used it; the cockpit uses FastAPI's
+```
+
+Then replace the `e2e` marker with `browser` in `pyproject.toml`:
 
 ```toml
 markers = [
@@ -216,7 +220,7 @@ git add -A && git commit -m "test: fixture site and engine fixtures; drop extens
 
 ---
 
-## Task 2: The error set
+### Task 2: The error set
 
 **Files:**
 - Create: `src/saidkick/errors.py`
@@ -292,7 +296,7 @@ git commit -m "feat(errors): closed error set with HTTP mapping"
 
 ---
 
-## Task 3: Locator model and resolution
+### Task 3: Locator model and resolution
 
 **Files:**
 - Create: `src/saidkick/locators.py`
@@ -411,7 +415,7 @@ git add -A && git commit -m "feat(locators): port 1.x locator vocabulary onto Pl
 
 ---
 
-## Task 4: Engine — lifecycle, contexts, tabs, navigation
+### Task 4: Engine — lifecycle, contexts, tabs, navigation
 
 **Files:**
 - Create: `src/saidkick/engine.py`
@@ -515,7 +519,7 @@ git add -A && git commit -m "feat(engine): Playwright-backed contexts, tabs and 
 
 ---
 
-## Task 5: Snapshots
+### Task 5: Snapshots
 
 **Files:**
 - Create: `src/saidkick/snapshot.py`
@@ -587,7 +591,7 @@ git add -A && git commit -m "feat(engine): aria/text/html snapshots"
 
 ---
 
-## Task 6: Actions
+### Task 6: Actions
 
 **Files:**
 - Create: `src/saidkick/actions.py`
@@ -699,7 +703,7 @@ git add -A && git commit -m "feat(engine): click/type/select/find/screenshot act
 
 ---
 
-## Task 7: Event bus
+### Task 7: Event bus
 
 **Files:**
 - Create: `src/saidkick/events.py`
@@ -768,7 +772,7 @@ git add -A && git commit -m "feat(events): in-memory event bus with monotonic se
 
 ---
 
-## Task 8: REST API
+### Task 8: REST API
 
 **Files:**
 - Create: `src/saidkick/api.py`
@@ -836,7 +840,7 @@ git add -A && git commit -m "feat(api): REST surface over the engine"
 
 ---
 
-## Task 9: MCP server
+### Task 9: MCP server
 
 **Files:**
 - Create: `src/saidkick/mcp_server.py`
@@ -907,7 +911,7 @@ git add -A && git commit -m "feat(mcp): VS1 tool surface with reviewed descripti
 
 ---
 
-## Task 10: Screencast pump
+### Task 10: Screencast pump
 
 **Files:**
 - Create: `src/saidkick/screencast.py`
@@ -1001,7 +1005,7 @@ git add -A && git commit -m "feat(screencast): CDP frame pump with mandatory ack
 
 ---
 
-## Task 11: Cockpit — session list and live view
+### Task 11: Cockpit — session list and live view
 
 **Files:**
 - Create: `src/saidkick/cockpit/templates/{base,index,session}.html`,
@@ -1055,7 +1059,7 @@ git add -A && git commit -m "feat(cockpit): session list and live screencast vie
 
 ---
 
-## Task 12: CLI and client rewrite; delete the old server
+### Task 12: CLI and client rewrite; delete the old server
 
 **Files:**
 - Rewrite: `src/saidkick/cli.py`, `src/saidkick/client.py`
@@ -1119,7 +1123,7 @@ into one command — a non-zero code in the middle of a chain is easy to miss.
 
 # VS2 — human takes the wheel
 
-## Task 13: Controller state machine
+### Task 13: Controller state machine
 
 **Files:**
 - Create: `src/saidkick/control.py`
@@ -1247,7 +1251,7 @@ git add -A && git commit -m "feat(control): arbitration state machine and human-
 
 ---
 
-## Task 14: Arbitration wired into the action path
+### Task 14: Arbitration wired into the action path
 
 **Files:**
 - Modify: `src/saidkick/actions.py`, `src/saidkick/api.py`, `src/saidkick/mcp_server.py`
@@ -1306,7 +1310,7 @@ git add -A && git commit -m "feat(control): gate mutating actions on the control
 
 ---
 
-## Task 15: Takeover input forwarding
+### Task 15: Takeover input forwarding
 
 **Files:**
 - Create: `src/saidkick/input_bridge.py`
@@ -1411,7 +1415,7 @@ git add -A && git commit -m "feat(control): takeover input forwarding over CDP"
 
 ---
 
-## Task 16: Attention overlay
+### Task 16: Attention overlay
 
 **Files:**
 - Create: `src/saidkick/overlay.py`
@@ -1505,7 +1509,7 @@ git add -A && git commit -m "feat(control): agent-invisible attention overlay"
 
 ---
 
-## Task 17: Terminal dashboard
+### Task 17: Terminal dashboard
 
 **Files:**
 - Create: `src/saidkick/dashboard.py`
@@ -1564,7 +1568,7 @@ git add -A && git commit -m "feat(cli): live terminal dashboard for saidkick ser
 
 ---
 
-## Task 18: `request_human` MCP tool, description obligations, and the webhook
+### Task 18: `request_human` MCP tool, description obligations, and the webhook
 
 **Files:**
 - Modify: `src/saidkick/mcp_server.py`, `src/saidkick/control.py`
@@ -1631,7 +1635,7 @@ git add -A && git commit -m "feat(mcp): request_human with relay obligations and
 
 ---
 
-## Task 19: Cockpit takeover UI
+### Task 19: Cockpit takeover UI
 
 **Files:**
 - Modify: `src/saidkick/cockpit/templates/session.html`,
@@ -1692,7 +1696,7 @@ git add -A && git commit -m "feat(cockpit): takeover UI with release-on-disconne
 
 ---
 
-## Task 20: VS2 gate, docs, and the end-to-end rescue
+### Task 20: VS2 gate, docs, and the end-to-end rescue
 
 **Files:**
 - Modify: `README.md`, `SKILL.md`, `CHANGELOG.md`
