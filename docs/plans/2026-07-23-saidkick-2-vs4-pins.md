@@ -14,6 +14,23 @@ the same bundle. Pins are created only by humans.
 
 **Tech Stack:** unchanged — Playwright 1.61, FastAPI, mcp 1.28, pytest.
 
+
+**Status:** COMPLETE — 2026-07-23. All 5 tasks on `main`; gate green (ruff clean,
+93 non-browser + 111 browser tests). Released as 2.1.0. Smoke-tested end to end
+against the running daemon: rect pin → BUTTON with by_role/by_text suggestion →
+`saidkick pins` lists it → click via handle fires the onclick.
+
+**Deviations:**
+1. Two route-ordering / param bugs the plan did not foresee, both caught by
+   tests: `/tabs/{tid}/pin` had to be registered *before* the `/{action}`
+   catch-all (which was eating "pin" as an unknown action), and the `handle`
+   param on `type`/`press`/`select` had to go *after* their required positional
+   args (a defaulted param cannot precede a required one).
+2. `_target` (handle-or-locator) is duplicated in both `api.py` and
+   `mcp_server.py` rather than shared — each closes over its own `pins`/`engine`
+   and the two call shapes differ enough that a shared helper would be more
+   indirection than it saves.
+
 **Spec:** `docs/specs/2026-07-23-saidkick-2-agent-native-browser-design.md` §6 (Pins). Every
 mechanism below was verified against a live Playwright 1.61 probe before this plan was written.
 
@@ -58,7 +75,7 @@ marker, commit per task). New:
   - `async resolve(tab, handle) -> Locator` — returns the stamp locator, raising `StaleHandle` if
     the stamp no longer resolves in the page.
 
-- [ ] **Step 1: failing tests**
+- [x] **Step 1: failing tests**
 
 ```python
 import pytest
@@ -127,8 +144,8 @@ async def test_list_filters_by_tab(tab):
     assert reg.list("ctx_other:1") == []
 ```
 
-- [ ] **Step 2:** run → fail (no module).
-- [ ] **Step 3: implement.** Minting: `cdp = await tab.context.cdp(tab)`, `DOM.enable`,
+- [x] **Step 2:** run → fail (no module).
+- [x] **Step 3: implement.** Minting: `cdp = await tab.context.cdp(tab)`, `DOM.enable`,
   `DOM.getNodeForLocation(x,y)` → `backendNodeId` → `DOM.resolveNode` → `Runtime.callFunctionOn`
   stamping `data-saidkick-pin`. Build bundle by evaluating on the stamp locator: descriptor
   (`tag,text,role,label,placeholder,id`), durable `css` (`#id` if present else a nth-of-type
@@ -138,8 +155,8 @@ async def test_list_filters_by_tab(tab):
   ancestors of other hits (leaf-most), falls back to common ancestor if empty, then stamps.
   `resolve` returns `Locator(css=f'[data-saidkick-pin="{handle}"]')` after
   `await tab.page.locator(sel).count()` — 0 ⇒ `StaleHandle`.
-- [ ] **Step 4:** run → pass.
-- [ ] **Step 5:** commit `feat(pins): registry — mint, resolve, staleness`.
+- [x] **Step 4:** run → pass.
+- [x] **Step 5:** commit `feat(pins): registry — mint, resolve, staleness`.
 
 ---
 
@@ -153,12 +170,12 @@ async def test_list_filters_by_tab(tab):
 - Every acting route accepts `{"handle": "el_x"}` in the body as an alternative to a locator;
   when present it resolves through the registry (→ `StaleHandle` 410 if dead).
 
-- [ ] **Step 1: failing tests** (create context+tab, POST a pin at the button's centre, then
+- [x] **Step 1: failing tests** (create context+tab, POST a pin at the button's centre, then
   `POST /tabs/{tid}/click {"handle": pin_id}` submits the form; `GET /pins/{h}` returns the
   bundle; a click on a stale handle after navigation returns 410 `StaleHandle`).
-- [ ] **Step 2–4:** run/implement/run. Thread the shared `PinRegistry` into `create_app`; add a
+- [x] **Step 2–4:** run/implement/run. Thread the shared `PinRegistry` into `create_app`; add a
   `_target(tab, body)` helper: `handle` → `registry.resolve`, else `_locator(body)`.
-- [ ] **Step 5:** commit `feat(pins,api): mint via REST and act on a handle`.
+- [x] **Step 5:** commit `feat(pins,api): mint via REST and act on a handle`.
 
 ---
 
@@ -170,14 +187,14 @@ async def test_list_filters_by_tab(tab):
 `handle: str | None = None` added to `click`, `type`, `press`, `select`, `hover`, `scroll`,
 `highlight`, `find` — when set, resolve through the registry before acting.
 
-- [ ] **Step 1: failing tests** — both tools registered with real descriptions; `read_pin`
+- [x] **Step 1: failing tests** — both tools registered with real descriptions; `read_pin`
   description tells the agent the handle may be stale and to fall back to the bundle's selectors;
   a browser test that mints a pin (via the registry directly), then `click` with `handle=` submits
   the form.
-- [ ] **Step 2–4:** run/implement/run. `read_pin` description states plainly: humans place pins,
+- [x] **Step 2–4:** run/implement/run. `read_pin` description states plainly: humans place pins,
   you cannot; use `handle` to act; if you get `StaleHandle`, use the `css`/`xpath`/suggested
   locator in the bundle instead.
-- [ ] **Step 5:** commit `feat(pins,mcp): list_pins/read_pin and handle targets`.
+- [x] **Step 5:** commit `feat(pins,mcp): list_pins/read_pin and handle targets`.
 
 ---
 
@@ -192,12 +209,12 @@ The control socket accepts `{"type":"pin", "x","y"[, "w","h"], "label"}`, mints 
 `highlight`s the element so the operator sees the echo in the stream, emits a `pin_created` event,
 and replies `{"pin": <info>}`. Pinning does **not** require holding control.
 
-- [ ] **Step 1: failing test** — over the control socket (no `take`), send a `pin` message at the
+- [x] **Step 1: failing test** — over the control socket (no `take`), send a `pin` message at the
   button's centre; assert the reply carries a `pin` with `descriptor.tag == "BUTTON"` and that
   `registry.list(tab)` grew.
-- [ ] **Step 2–4:** run/implement/run. JS: a Pin toggle; on mousedown record start, on mouseup
+- [x] **Step 2–4:** run/implement/run. JS: a Pin toggle; on mousedown record start, on mouseup
   emit point (no drag) or rect (dragged >5px); render returned pins as a list with their labels.
-- [ ] **Step 5:** commit `feat(pins,cockpit): click and drag to place pins`.
+- [x] **Step 5:** commit `feat(pins,cockpit): click and drag to place pins`.
 
 ---
 
@@ -206,12 +223,12 @@ and replies `{"pin": <info>}`. Pinning does **not** require holding control.
 **Files:** `src/saidkick/client.py`, `cli.py`, `README.md`, `SKILL.md`, `CHANGELOG.md`,
 `pyproject.toml`.
 
-- [ ] **Step 1:** `SaidkickClient.pins(context)` / `read_pin(handle)`; `saidkick pins --context C`.
-- [ ] **Step 2: full gate**, each as its own step, checking each exit code:
+- [x] **Step 1:** `SaidkickClient.pins(context)` / `read_pin(handle)`; `saidkick pins --context C`.
+- [x] **Step 2: full gate**, each as its own step, checking each exit code:
   `uvx ruff check src tests` · `uv run pytest -m "not browser" -q` · `uv run pytest -m browser -q`.
-- [ ] **Step 3:** README "Pins" section + SKILL.md "Using a pin" (act on `handle`; on `StaleHandle`
+- [x] **Step 3:** README "Pins" section + SKILL.md "Using a pin" (act on `handle`; on `StaleHandle`
   fall back to the bundle's selectors); CHANGELOG 2.1.0; bump version.
-- [ ] **Step 4:** commit `feat(pins): CLI, docs, 2.1.0`.
+- [x] **Step 4:** commit `feat(pins): CLI, docs, 2.1.0`.
 
 ---
 
