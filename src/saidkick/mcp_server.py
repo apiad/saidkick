@@ -20,6 +20,7 @@ from .control import Controller
 from .engine import Engine
 from .events import EventBus
 from .locators import Locator
+from .pins import PinRegistry
 from .snapshot import snapshot
 
 LOCATOR_DOC = """
@@ -31,6 +32,11 @@ name). Refine with `within_css` to scope, `nth` to disambiguate, `exact` or
 
 Prefer semantic locators over `css`: they survive redesigns, and the values
 come straight out of `snapshot`.
+
+Or pass `handle` — the id of a pin a human placed (see `list_pins` / `read_pin`)
+— to act on exactly the element they pointed at, with no locator at all. If a
+handle has gone stale (the page changed), you get a StaleHandle error; fall back
+to the css / xpath / suggested locator that `read_pin` returned for it.
 """.strip()
 
 
@@ -55,16 +61,30 @@ def _loc(
 
 
 def build_mcp(
-    engine: Engine, controller: Controller | None = None, events: EventBus | None = None
+    engine: Engine,
+    controller: Controller | None = None,
+    events: EventBus | None = None,
+    pins: PinRegistry | None = None,
 ) -> FastMCP:
     controller = controller or engine.controller or Controller()
     engine.controller = controller
     events = events or EventBus()
+    pins = pins if pins is not None else PinRegistry()
     mcp = FastMCP("saidkick")
     # streamable_http_app() serves at settings.streamable_http_path, which
     # defaults to "/mcp". Since the app is mounted at "/mcp", leaving the
     # default would put the endpoint at "/mcp/mcp".
     mcp.settings.streamable_http_path = "/"
+
+    async def _target(
+        tab_id, handle, css, xpath, by_text, by_label, by_placeholder,
+        by_role, within_css, nth, exact, regex, wait_ms,
+    ):
+        """A pin handle or a plain locator. A dead handle raises StaleHandle."""
+        if handle:
+            return await pins.resolve(engine.find_tab(tab_id), handle)
+        return _loc(css, xpath, by_text, by_label, by_placeholder, by_role,
+                    within_css, nth, exact, regex, wait_ms)
 
     # -- contexts ---------------------------------------------------------
 
@@ -179,6 +199,7 @@ def build_mcp(
     )
     async def find(
         tab: str,
+        handle: str | None = None,
         css: str | None = None,
         xpath: str | None = None,
         by_text: str | None = None,
@@ -191,7 +212,7 @@ def build_mcp(
         regex: bool = False,
         wait_ms: int = 0,
     ) -> list[dict]:
-        return await A.find(engine.find_tab(tab), _loc(css, xpath, by_text, by_label, by_placeholder, by_role, within_css, nth, exact, regex, wait_ms))
+        return await A.find(engine.find_tab(tab), await _target(tab, handle, css, xpath, by_text, by_label, by_placeholder, by_role, within_css, nth, exact, regex, wait_ms))
 
     @mcp.tool(
         description=(
@@ -223,6 +244,7 @@ def build_mcp(
     @mcp.tool(description="Click an element.\n\n" + LOCATOR_DOC)
     async def click(
         tab: str,
+        handle: str | None = None,
         css: str | None = None,
         xpath: str | None = None,
         by_text: str | None = None,
@@ -235,7 +257,7 @@ def build_mcp(
         regex: bool = False,
         wait_ms: int = 0,
     ) -> dict:
-        return await A.click(engine.find_tab(tab), _loc(css, xpath, by_text, by_label, by_placeholder, by_role, within_css, nth, exact, regex, wait_ms))
+        return await A.click(engine.find_tab(tab), await _target(tab, handle, css, xpath, by_text, by_label, by_placeholder, by_role, within_css, nth, exact, regex, wait_ms))
 
     @mcp.tool(
         description=(
@@ -248,6 +270,7 @@ def build_mcp(
         tab: str,
         text: str,
         submit: bool = False,
+        handle: str | None = None,
         css: str | None = None,
         xpath: str | None = None,
         by_text: str | None = None,
@@ -261,7 +284,7 @@ def build_mcp(
         wait_ms: int = 0,
     ) -> dict:
         return await A.type_text(
-            engine.find_tab(tab), _loc(css, xpath, by_text, by_label, by_placeholder, by_role, within_css, nth, exact, regex, wait_ms), text, submit=submit
+            engine.find_tab(tab), await _target(tab, handle, css, xpath, by_text, by_label, by_placeholder, by_role, within_css, nth, exact, regex, wait_ms), text, submit=submit
         )
 
     @mcp.tool(
@@ -275,6 +298,7 @@ def build_mcp(
         tab: str,
         key: str,
         modifiers: list[str] | None = None,
+        handle: str | None = None,
         css: str | None = None,
         xpath: str | None = None,
         by_text: str | None = None,
@@ -287,12 +311,13 @@ def build_mcp(
         regex: bool = False,
         wait_ms: int = 0,
     ) -> dict:
-        return await A.press(engine.find_tab(tab), key, _loc(css, xpath, by_text, by_label, by_placeholder, by_role, within_css, nth, exact, regex, wait_ms), modifiers)
+        return await A.press(engine.find_tab(tab), key, await _target(tab, handle, css, xpath, by_text, by_label, by_placeholder, by_role, within_css, nth, exact, regex, wait_ms), modifiers)
 
     @mcp.tool(description="Choose one or more options in a <select>.\n\n" + LOCATOR_DOC)
     async def select(
         tab: str,
         values: list[str],
+        handle: str | None = None,
         css: str | None = None,
         xpath: str | None = None,
         by_text: str | None = None,
@@ -305,7 +330,7 @@ def build_mcp(
         regex: bool = False,
         wait_ms: int = 0,
     ) -> dict:
-        return await A.select(engine.find_tab(tab), _loc(css, xpath, by_text, by_label, by_placeholder, by_role, within_css, nth, exact, regex, wait_ms), values)
+        return await A.select(engine.find_tab(tab), await _target(tab, handle, css, xpath, by_text, by_label, by_placeholder, by_role, within_css, nth, exact, regex, wait_ms), values)
 
     @mcp.tool(
         description=(
@@ -317,6 +342,7 @@ def build_mcp(
     )
     async def highlight(
         tab: str,
+        handle: str | None = None,
         color: str = "#ef4444",
         duration_ms: int = 2000,
         css: str | None = None,
@@ -379,6 +405,33 @@ def build_mcp(
             "controller": controller.state(context),
             "pending_request": pending.info() if pending else None,
         }
+
+    # -- pins -------------------------------------------------------------
+
+    @mcp.tool(
+        description=(
+            "List the pins in a context. A pin is an element a HUMAN pointed at in the "
+            "cockpit — 'this is the thing I mean' — and you cannot create one, only use it. "
+            "Each entry has a `handle` you can pass to click/type/etc. as `handle=`, plus a "
+            "label the human may have typed. When a human tells you to work on something they "
+            "highlighted, check here first."
+        )
+    )
+    async def list_pins(context: str) -> list[dict]:
+        tabs = {t["id"] for t in engine.get_context(context).list_tabs()}
+        return [p.info() for p in pins.list() if p.tab_id in tabs]
+
+    @mcp.tool(
+        description=(
+            "Read one pin's full bundle: the element's role, text and other descriptors, a "
+            "suggested locator, durable css and xpath, and a clipped screenshot. Act on it by "
+            "passing `handle=` to click/type/etc. If that returns StaleHandle — the page "
+            "changed and the pin no longer resolves — use the `css`, `xpath`, or "
+            "`suggested_locator` from this bundle instead."
+        )
+    )
+    async def read_pin(handle: str) -> dict:
+        return pins.get(handle).info(include_screenshot=True)
 
     # -- diagnostics ------------------------------------------------------
 

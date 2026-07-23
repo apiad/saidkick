@@ -21,6 +21,7 @@ VS1_TOOLS = {
     "get_events",
 }
 VS2_TOOLS = {"request_human", "control_state"}
+VS4_TOOLS = {"list_pins", "read_pin"}
 
 
 async def _descriptions(engine, controller):
@@ -32,6 +33,56 @@ async def test_all_tools_registered(engine, controller):
     names = set(await _descriptions(engine, controller))
     assert VS1_TOOLS <= names
     assert VS2_TOOLS <= names
+    assert VS4_TOOLS <= names
+
+
+async def test_read_pin_tells_the_agent_to_fall_back_on_stale(engine, controller):
+    d = (await _descriptions(engine, controller))["read_pin"]
+    assert "StaleHandle" in d
+    assert "suggested_locator" in d or "xpath" in d
+
+
+async def test_list_pins_says_humans_place_them(engine, controller):
+    d = (await _descriptions(engine, controller))["list_pins"].lower()
+    assert "human" in d and "cannot create" in d
+
+
+async def test_acting_tools_document_the_handle_option(engine, controller):
+    d = await _descriptions(engine, controller)
+    for name in ("click", "type", "find"):
+        assert "handle" in d[name].lower(), name
+
+
+@pytest.mark.browser
+async def test_click_via_handle_submits_the_form(engine, controller, fixture_url):
+    from saidkick.pins import PinRegistry
+
+    pins = PinRegistry()
+    mcp = build_mcp(engine, controller, pins=pins)
+    ctx = await engine.open_context()
+    tab = await ctx.open_tab(f"{fixture_url}/form.html")
+    box = await tab.page.locator("#go").bounding_box()
+    pin = await pins.mint_point(tab, box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+
+    await mcp.call_tool("type", {"tab": tab.id, "text": "viahandle", "css": "#u"})
+    await mcp.call_tool("click", {"tab": tab.id, "handle": pin.id})
+    text = await mcp.call_tool("snapshot_page", {"tab": tab.id, "mode": "text"})
+    assert "submitted:viahandle" in str(text)
+
+
+@pytest.mark.browser
+async def test_read_pin_returns_the_bundle(engine, controller, fixture_url):
+    from saidkick.pins import PinRegistry
+
+    pins = PinRegistry()
+    mcp = build_mcp(engine, controller, pins=pins)
+    ctx = await engine.open_context()
+    tab = await ctx.open_tab(f"{fixture_url}/form.html")
+    box = await tab.page.locator("#go").bounding_box()
+    pin = await pins.mint_point(tab, box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+
+    out = await mcp.call_tool("read_pin", {"handle": pin.id})
+    assert "BUTTON" in str(out)
 
 
 async def test_every_tool_has_a_real_description(engine, controller):
