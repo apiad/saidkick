@@ -9,7 +9,7 @@ serves a human cockpit for supervision and takeover. Breaking: saidkick 2.0.
 
 ## 1. Why
 
-Saidkick 1.x drives Alex's real Chrome from the terminal. It works, but every capability it has
+Saidkick 1.x drives the user's real Chrome from the terminal. It works, but every capability it has
 was smuggled past a security model designed to keep it out. `chrome.debugger` is the only way to
 reach CDP. MV3 kills the service worker on idle. CSP blocks content-script injection, so
 execution falls back to the debugger again. The accessibility tree is unreachable from the
@@ -22,7 +22,7 @@ than a tolerated intruder, and that the human's role is supervisory: solve the c
 stupid. The browser is driven by agents and watched by a human.
 
 A second motivation is end-to-end testing. Isolated, reproducible browsing contexts with clean
-storage are a requirement for testing Alex's own applications, and 1.x — which shares one real
+storage are a requirement for testing one's own applications, and 1.x — which shares one real
 Chrome profile across everything — cannot provide them.
 
 ## 2. Non-goals
@@ -30,15 +30,18 @@ Chrome profile across everything — cannot provide them.
 Explicitly out of scope for 2.0:
 
 - **Daily-driver browsing.** No bookmarks, no password manager, no history UI, no sync, no ad
-  blocking. Chrome remains Alex's browser for browsing.
+  blocking. A conventional browser remains the tool for browsing.
 - **Chrome extension support.** The MV3 extension is deleted, and no extension-loading mechanism
   replaces it.
 - **An approval-policy engine.** Gating risky actions (purchases, deletions, sends) behind a
   policy is a natural extension of the human-in-the-loop machinery, but it is not v1.
 - **Multi-user auth on the cockpit.** Single operator, bound to localhost by default.
+- **Integrations with any notification service.** saidkick announces on the terminal, through the
+  agent's own words, and in the page itself (§5.1). Anything beyond that is a generic outbound
+  webhook the user configures; no chat, mail, or push provider is shipped or named.
 - **Containerized per-context isolation.** Storage partitioning inside one Chromium is sufficient.
   If per-context containers are ever needed, `sandbox` is the natural owner, not this repo.
-- **Driving Alex's existing Chrome.** See §12.
+- **Driving an existing Chrome installation.** See §12.
 
 ## 3. Object model
 
@@ -48,14 +51,15 @@ Five objects. Three are addressable by agents.
 
 A named on-disk storage partition at `~/.saidkick/profiles/<name>/`: cookies, localStorage,
 sessionStorage, IndexedDB, service workers. Created empty and populated over time by human
-takeover. This is the durable thing — `alex-personal`, `test-clean`, `client-acme`.
+takeover. This is the durable thing — `personal`, `test-clean`, `client-acme`.
 
 ### Context
 
 A live browsing session in one of two modes.
 
 **Attached** — Playwright `launch_persistent_context` against the profile directory. Writes back.
-This is "be Alex on GitHub." **Exactly one attached context per profile may be live at a time**:
+This is "act as the real signed-in user on GitHub." **Exactly one attached context per profile
+may be live at a time**:
 Chromium takes an exclusive lock on a user-data-dir, so this is a hard constraint of the engine,
 not a policy choice. A second attempt raises `ProfileLocked`.
 
@@ -111,8 +115,7 @@ act.
 ### Acquiring control
 
 **The polite path.** The agent calls `request_human(context, reason, deadline_s, poll_s)`. The
-context enters `awaiting_human`, a card appears in the cockpit, and a configurable webhook fires
-(wired locally to `notify-telegram.sh`) carrying a deep link to that session.
+context enters `awaiting_human` and the request is announced on every channel in §5.1.
 
 Two independent durations, and conflating them is the obvious trap:
 
@@ -147,6 +150,53 @@ note the operator types ("logged in", "captcha solved") which lands in the agent
 The request resolves as `timeout` and the agent decides what to do next. The context is **not**
 killed and the browser is not touched — reaping a half-finished login would destroy exactly the
 state the human was about to rescue.
+
+### 5.1 How the human finds out
+
+The weakest possible design is "a card appears in the cockpit", because it assumes the operator
+is already looking at the cockpit — which they usually are not. And routing the alert to a
+specific chat service would bake one user's setup into an open-source tool. So the announcement
+goes out on **three channels that need no configuration**, plus one optional escape hatch.
+
+**1. The terminal running the daemon.** `saidkick serve` is not a log spew; it renders a live
+Rich dashboard in the terminal it was started from — contexts and their tabs, which agent owns
+each one, the controller state, a tail of recent actions, and, occupying the top of the screen
+whenever one exists, the **pending human requests**: context, reason, elapsed, remaining, and the
+cockpit URL to open. This is the default surface for a developer who started the daemon in a
+terminal and is working nearby. `--quiet` falls back to plain log lines for daemonized runs.
+
+**2. The agent's own words.** The agent already has a channel to its human — a chat window, a
+CLI, a notification — and it is the only channel that is guaranteed to exist. saidkick makes use
+of it by **writing the instruction into the MCP tool descriptions**: `request_human`'s
+description tells the agent that it must relay `reason` to its own operator through its own
+channel before waiting, and that on `still_waiting` it should surface the wait rather than loop
+silently. The return payloads carry a ready-to-relay `human_message` string and the cockpit URL
+so the agent has something concrete to pass along.
+
+This is the channel that works when the daemon is headless on a server and nobody is watching the
+terminal — which is the common case for a scheduled job — and it costs nothing but careful
+prose. Tool descriptions are the integration point, not an afterthought.
+
+**3. The page itself.** When the browser is headful, the tab that needs help asks for attention
+directly: `Page.bringToFront` raises it, an injected overlay banner names the reason, the viewport
+gets a pulsing border, and the document title and favicon are swapped for an attention marker
+that is visible in the tab strip even when the window is buried. If the request resolves or times
+out, all of it is reverted.
+
+The overlay must be **invisible to the agent**, or the next accessibility snapshot will contain
+saidkick's own banner and the agent will try to interact with it. It is therefore mounted in a
+shadow root on a single injected host element, marked `aria-hidden="true"` and
+`role="presentation"` so Playwright's a11y snapshot skips it entirely, and given
+`pointer-events: none` except on its own dismiss control. That invariant is a test, not a hope
+(§11).
+
+Sound is deliberately omitted: browser autoplay policy blocks audio without a prior user gesture,
+so a notification chime would work unpredictably and be worse than no chime at all.
+
+**4. An optional webhook.** `notify.webhook_url` in the config posts a JSON payload
+(`{context, reason, url, deadline}`) when a request opens. Unbranded and off by default — it is
+how a user wires up whatever they personally use, and saidkick ships no integration with any
+particular service.
 
 ## 6. Seeing and driving the page
 
@@ -238,7 +288,16 @@ intact; it simply resolves through Playwright instead of hand-rolled CDP and con
 | Human loop | `request_human(context, reason, deadline_s, poll_s)`, `control_state(context)`, `list_pins`, `read_pin` |
 | Diagnostics | `events(context, since_seq)`, `start_trace`, `stop_trace` |
 
-Three notes.
+Four notes.
+
+**Tool descriptions are a deliverable, not documentation.** They are the only mechanism by which
+saidkick can influence agent behaviour, and per §5.1 the agent's own channel to its human is the
+most reliable notification path in the system. So the descriptions carry obligations, not just
+signatures: `request_human` instructs the agent to relay `reason` to its operator before waiting
+and to surface a `still_waiting` rather than loop silently; `open_context` explains when
+`ephemeral` is the correct default and that `attached` writes back to real credentials;
+`snapshot` states that `aria` is preferred and `html` is a last resort. They are reviewed and
+revised like code, and they belong in the same file as the tools so they cannot drift.
 
 **`snapshot` defaults to `mode="aria"`** — a Playwright accessibility-tree snapshot, not raw HTML
 and not `innerText`. The a11y tree is compact enough to fit in context, and every node carries a
@@ -330,6 +389,11 @@ The layering in §4 is what makes each layer cheap to test.
 - **Takeover** — the input-forwarding path is tested at the message level (canvas coordinates →
   CDP parameters). The pixel path is verified by hand; there is no honest unit test for "does it
   feel right to type into."
+- **Attention overlay** — one non-negotiable test against the fixture site: take an `aria`
+  snapshot with the overlay injected and assert it is byte-identical to the snapshot without it,
+  and that the injected host element is absent from `find` results. If the overlay is ever
+  visible to the agent, the agent will try to click saidkick's own banner. Also asserted:
+  title and favicon are restored exactly on resolve and on timeout.
 
 Browser tests carry `@pytest.mark.browser` so `pytest -m "not browser"` stays fast. The existing
 `e2e` marker is retired in favour of it.
@@ -363,8 +427,9 @@ screencasts one. No takeover, no pins, no on-disk profiles, no beaver. *Demonstr
 an agent fills out the fixture form while the operator watches it live.
 
 **VS2 — human takes the wheel.** Arbitration state machine, takeover input forwarding,
-`request_human`, notification webhook. *This is where the thesis is true:* the agent hits 2FA,
-pings Telegram, gets rescued, continues.
+`request_human`, and all three announcement channels from §5.1 (terminal dashboard, tool-description
+obligations, in-page attention overlay). *This is where the thesis is true:* the agent hits 2FA,
+says so, gets rescued, continues.
 
 **VS3 — profiles persist.** On-disk profiles, attached mode, `ProfileLocked`, `save_profile`.
 
