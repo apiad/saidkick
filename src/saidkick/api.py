@@ -25,6 +25,7 @@ from .engine import Engine
 from .events import EventBus
 from .input_bridge import forward
 from .locators import Locator
+from .pins import PinRegistry
 from .screencast import (
     OBSERVE_MAX_WIDTH,
     OBSERVE_QUALITY,
@@ -64,10 +65,12 @@ def create_app(
     controller: Controller | None = None,
     events: EventBus | None = None,
     mcp: Any = None,
+    pins: PinRegistry | None = None,
 ) -> FastAPI:
     controller = controller or engine.controller or Controller()
     engine.controller = controller
     events = events or EventBus()
+    pins = pins if pins is not None else PinRegistry()
     pumps: dict[str, ScreencastPump] = {}
 
     @asynccontextmanager
@@ -177,17 +180,47 @@ def create_app(
         png = await A.screenshot(engine.find_tab(tid), full_page=full_page)
         return Response(content=png, media_type="image/png")
 
+    async def _target(tab, body: dict) -> Locator:
+        """A pin handle or a plain locator. A dead handle raises StaleHandle."""
+        handle = body.get("handle")
+        if handle:
+            return await pins.resolve(tab, handle)
+        return _locator(body)
+
     @app.post("/tabs/{tid}/press")
     async def do_press(tid: str, body: dict = Body(...)):
         tab = engine.find_tab(tid)
-        return await A.press(tab, body["key"], _locator(body), body.get("modifiers"))
+        return await A.press(tab, body["key"], await _target(tab, body), body.get("modifiers"))
+
+    # -- pins (registered before the /{action} catch-all so "pin" is not eaten) --
+
+    @app.get("/contexts/{cid}/pins")
+    async def list_pins(cid: str):
+        tabs = {t["id"] for t in engine.get_context(cid).list_tabs()}
+        return [p.info() for p in pins.list() if p.tab_id in tabs]
+
+    @app.get("/pins/{handle}")
+    async def read_pin(handle: str, screenshot: bool = False):
+        return pins.get(handle).info(include_screenshot=screenshot)
+
+    @app.post("/tabs/{tid}/pin")
+    async def create_pin(tid: str, body: dict = Body(...)):
+        tab = engine.find_tab(tid)
+        if "w" in body and "h" in body:
+            pin = await pins.mint_rect(
+                tab, body["x"], body["y"], body["w"], body["h"], label=body.get("label")
+            )
+        else:
+            pin = await pins.mint_point(tab, body["x"], body["y"], label=body.get("label"))
+        events.emit(tab.context.id, "pin_created", handle=pin.id, tab=tid)
+        return pin.info(include_screenshot=True)
 
     @app.post("/tabs/{tid}/{action}")
     async def do_action(tid: str, action: str, body: dict = Body(default={})):
         if action not in ACTIONS:
             raise E.NoSuchTab(f"unknown action: {action}")
         tab = engine.find_tab(tid)
-        return {"result": await ACTIONS[action](tab, _locator(body), body)}
+        return {"result": await ACTIONS[action](tab, await _target(tab, body), body)}
 
     # -- control ----------------------------------------------------------
 
