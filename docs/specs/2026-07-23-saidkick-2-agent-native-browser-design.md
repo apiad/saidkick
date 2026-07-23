@@ -67,6 +67,24 @@ not a policy choice. A second attempt raises `ProfileLocked`.
 on close. Unlimited parallel instances. This is the e2e-testing mode and the safe default for
 anything destructive.
 
+**Verified limit on seeding (Playwright 1.61).** `BrowserContext.storage_state()` returns
+`{cookies, origins}`, where `origins` carries **localStorage only** — sessionStorage, IndexedDB
+and service workers are not portable through it. So the two modes differ in what they preserve,
+and the difference is not cosmetic:
+
+| | attached | ephemeral (seeded) |
+|---|---|---|
+| cookies | yes | yes |
+| localStorage | yes | yes |
+| sessionStorage | yes | **no** |
+| IndexedDB | yes | **no** |
+| service workers | yes | **no** |
+
+Most authentication survives seeding, because most session tokens live in cookies or
+localStorage. Applications that keep auth in IndexedDB (notably some Firebase and Supabase
+setups) will appear logged out in an ephemeral context, and that is expected behaviour, not a
+bug. `save_profile` (§7) is the way to move state the other direction.
+
 ### Tab
 
 A Playwright `Page` inside a context. Addressed as `ctx_a1b2:3`.
@@ -207,6 +225,16 @@ acknowledged per frame (`Page.screencastFrameAck`) for backpressure. Started laz
 opens a session and stopped when the last viewer disconnects — screencasting idle contexts to
 nobody would burn CPU for nothing.
 
+**The ack is mandatory, not an optimization.** Verified on Playwright 1.61 / Chromium: a session
+that starts a screencast and never acks receives **exactly one frame**, forever. The backpressure
+loop *is* the transport, so a bug in the ack path does not degrade the stream, it flatlines it
+after the first image — which looks exactly like a working screenshot. §11 covers this with a
+test asserting frame count grows past one.
+
+Each frame arrives as `{data (base64 JPEG), metadata, sessionId}`, where `metadata` carries
+`deviceWidth`, `deviceHeight`, `pageScaleFactor`, `scrollOffsetX/Y` and `offsetTop` — everything
+needed to map canvas coordinates back to page coordinates for takeover and pins.
+
 **JPEG, not PNG.** On localhost, bandwidth is free; the cost is CPU in Chromium's encoder on
 every compositor update, and PNG's lossless deflate is roughly an order of magnitude more
 expensive per frame than JPEG at q80. Resolution is an independent knob (`maxWidth`/`maxHeight`),
@@ -258,8 +286,15 @@ operator sees the echo in the stream before it becomes a pin.
 
 **What the agent receives** is a bundle, not an XPath:
 
-- a **live handle** (`el_x7f2`) bound to the actual Playwright `ElementHandle` in the daemon, so
-  the agent calls `click(el_x7f2)` with no selector resolution and no ambiguity
+- a **live handle** (`el_x7f2`), so the agent calls `click(el_x7f2)` with no selector resolution
+  and no ambiguity. Mechanically this is *not* a Playwright `ElementHandle`: CDP hands back a
+  `backendNodeId`, and there is no public API to adopt one into a Playwright handle. Instead the
+  daemon calls `DOM.resolveNode` → `Runtime.callFunctionOn` to **stamp the element with a
+  `data-saidkick-pin="el_x7f2"` attribute**, and the handle resolves as
+  `page.locator('[data-saidkick-pin="el_x7f2"]')`. Verified working end to end. This is also more
+  durable than an `ElementHandle`, which dies on any navigation, whereas a stamped attribute
+  survives re-render as long as the node itself does. The cost is one attribute written into the
+  page, which is invisible to the accessibility snapshot.
 - the semantic descriptors the engine already speaks — text, `aria-label`, placeholder, role —
   and a suggested `by_text` / `by_label` / `by_role` locator
 - a CSS selector and an XPath as durable fallbacks
@@ -299,12 +334,26 @@ and to surface a `still_waiting` rather than loop silently; `open_context` expla
 `snapshot` states that `aria` is preferred and `html` is a last resort. They are reviewed and
 revised like code, and they belong in the same file as the tools so they cannot drift.
 
-**`snapshot` defaults to `mode="aria"`** — a Playwright accessibility-tree snapshot, not raw HTML
-and not `innerText`. The a11y tree is compact enough to fit in context, and every node carries a
-role and accessible name that map directly onto a `by_role` / `by_label` / `by_text` locator, so
-an agent that has read the snapshot already knows how to address everything it can see.
-`mode="text"` and `mode="html"` remain available; handing an agent 400KB of raw DOM is how 1.x
-burns context for no gain.
+**`snapshot` defaults to `mode="aria"`** — an ARIA snapshot, not raw HTML and not `innerText`.
+It is compact enough to fit in context, and every node carries a role and accessible name that
+map directly onto a `by_role` / `by_label` / `by_text` locator, so an agent that has read the
+snapshot already knows how to address everything it can see. `mode="text"` and `mode="html"`
+remain available; handing an agent 400KB of raw DOM is how 1.x burns context for no gain.
+
+The API is **`locator.aria_snapshot()`**, which returns a YAML-shaped string:
+
+```
+- heading "Fixture" [level=1]
+- textbox "Username":
+  - /placeholder: your name
+- button "Send"
+```
+
+Note for implementers: `page.accessibility` **does not exist** in Playwright 1.61 — the old
+accessibility namespace was removed, and `page._snapshot_for_ai()` is not present either. Every
+snapshot goes through `locator.aria_snapshot()`, scoped to `body` by default and to `within_css`
+when supplied. All four semantic locators were verified to map onto `get_by_label`,
+`get_by_placeholder`, `get_by_text` and `get_by_role` with matching results.
 
 **`save_profile` closes the bootstrapping loop.** The agent opens an ephemeral context, hits a
 login wall, calls `request_human`; the operator takes over, authenticates, releases; the agent
