@@ -61,6 +61,10 @@ def build_mcp(
     engine.controller = controller
     events = events or EventBus()
     mcp = FastMCP("saidkick")
+    # streamable_http_app() serves at settings.streamable_http_path, which
+    # defaults to "/mcp". Since the app is mounted at "/mcp", leaving the
+    # default would put the endpoint at "/mcp/mcp".
+    mcp.settings.streamable_http_path = "/"
 
     # -- contexts ---------------------------------------------------------
 
