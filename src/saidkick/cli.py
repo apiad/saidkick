@@ -97,12 +97,14 @@ def serve(
     from saidkick.engine import Engine
     from saidkick.events import EventBus
     from saidkick.mcp_server import build_mcp
+    from saidkick.pins import PinRegistry
 
     controller = Controller(cockpit_base=f"http://{host}:{port}")
     engine = Engine(headless=headless, controller=controller)
     events = EventBus()
-    mcp = build_mcp(engine, controller, events)
-    api = create_app(engine, controller, events, mcp=mcp)
+    pins = PinRegistry()
+    mcp = build_mcp(engine, controller, events, pins)
+    api = create_app(engine, controller, events, mcp=mcp, pins=pins)
 
     async def main():
         await engine.start()
@@ -319,6 +321,20 @@ def screenshot(
             console.print(f"wrote {len(png)} bytes to {output}")
         else:
             sys.stdout.buffer.write(png)
+    except Exception as exc:
+        handle_client_error(exc)
+
+
+@app.command()
+def pins(context: str = typer.Option(..., "--context")):
+    """List the pins a human placed in a context."""
+    try:
+        found = _client().pins(context)
+        if not found:
+            console.print("[dim]no pins[/dim]")
+        for pin in found:
+            d = pin["descriptor"]
+            console.print(f"{pin['handle']}  {pin.get('label') or d.get('text') or d['tag']}")
     except Exception as exc:
         handle_client_error(exc)
 

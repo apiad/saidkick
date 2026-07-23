@@ -4,6 +4,29 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-07-23
+
+### Added
+
+- **Pins** — a human points at an element in the cockpit (click, or drag a box)
+  and the agent gets an addressable reference to it. The registry resolves the
+  DOM node via `DOM.getNodeForLocation`, stamps it, and records a bundle:
+  descriptors, a suggested locator, durable css/xpath fallbacks, and a clipped
+  screenshot.
+- MCP tools `list_pins` and `read_pin`; the acting tools (`click`, `type`,
+  `press`, `select`, `highlight`, `find`) gain a `handle=` option.
+- REST: `GET /contexts/{cid}/pins`, `GET /pins/{handle}`, `POST /tabs/{tid}/pin`;
+  a `pin` message on the control socket. Placing a pin does not require holding
+  control.
+- Cockpit Pin mode (click or drag to place), and `saidkick pins --context C`.
+- A stale handle (the page changed) raises `StaleHandle`; the agent falls back
+  to the css/xpath/suggested locator in the pin's bundle.
+
+### Notes
+
+- Pins are human-placed only — no MCP tool mints one.
+
+
 ## [2.0.0] - 2026-07-23
 
 Saidkick is now a browser built for agents, with a human supervising it — not a

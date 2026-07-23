@@ -147,6 +147,14 @@ class SaidkickClient:
             self._client.get(f"/contexts/{context}/events", params={"since": since})
         )
 
+    def pins(self, context: str) -> list[dict]:
+        return self._json(self._client.get(f"/contexts/{context}/pins"))
+
+    def read_pin(self, handle: str, screenshot: bool = False) -> dict:
+        return self._json(
+            self._client.get(f"/pins/{handle}", params={"screenshot": screenshot})
+        )
+
 
 def b64decode(data: str) -> bytes:
     return base64.b64decode(data)

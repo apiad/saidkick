@@ -116,8 +116,8 @@ Saidkick ships no integration with any chat, mail, or push provider.
 | Contexts | `list_contexts`, `open_context`, `close_context` |
 | Tabs | `list_tabs`, `open_tab`, `close_tab`, `navigate` |
 | Reading | `snapshot_page`, `screenshot`, `find` |
-| Acting | `click`, `type`, `press`, `select`, `highlight` |
-| Human loop | `request_human`, `control_state` |
+| Acting | `click`, `type`, `press`, `select`, `highlight` (each also accepts `handle=`) |
+| Human loop | `request_human`, `control_state`, `list_pins`, `read_pin` |
 | Diagnostics | `get_events` |
 
 **`snapshot_page` is the one that matters**, and it defaults to `mode="aria"`:
@@ -133,6 +133,26 @@ Saidkick ships no integration with any chat, mail, or push provider.
 Every entry carries a role and an accessible name that map *directly* onto a locator — read
 `button "Send"`, then click with `by_role="button", by_text="Send"`. `mode="html"` exists and is
 a last resort: it floods the context window and tells the agent nothing `aria` doesn't.
+
+## 📍 Pins — pointing the agent at something
+
+When an agent can't figure out which element you mean, **point at it**. In the cockpit, toggle
+**Pin**, then click an element or drag a box around one. Saidkick resolves the DOM node, highlights
+it so you can confirm, and hands the agent an addressable reference — no takeover required, you
+just point while watching.
+
+The agent lists and reads pins (`list_pins`, `read_pin`) and acts on one by passing `handle=`:
+
+```
+you    → [cockpit] Pin mode, click the "Send" button
+agent  → list_pins(context)         →  [{handle: "el_7f2", label: "...", descriptor: {...}}]
+agent  → click(tab, handle="el_7f2")   ✓
+```
+
+Each pin carries the element's descriptors, a suggested locator, durable css/xpath fallbacks, and
+a clipped screenshot. Acting on a handle that has gone stale (the page changed) raises
+`StaleHandle`, and the agent falls back to the selectors in the pin's bundle. **Pins are placed by
+humans only** — the agent cannot create one, which is the whole point: it's *you* saying "this."
 
 ## 🎯 Locators
 
@@ -230,10 +250,10 @@ uv run saidkick serve --headful  # watch it work
 
 Shipped: isolated contexts and tabs, ARIA snapshots, the full locator vocabulary, actions, MCP,
 REST, the cockpit with live view and takeover, control arbitration, `request_human`, the terminal
-dashboard, and the attention overlay.
+dashboard, the attention overlay, and **pins**.
 
-Next: persistent profiles and `save_profile`; **pins** (click or drag on the live view to hand
-the agent a DOM reference — "*this* is the thing"); a run log and trace replay.
+Next: persistent profiles and `save_profile` (so logins survive a restart); a run log and trace
+replay.
 
 ## 📜 License
 

@@ -34,6 +34,10 @@ def test_contexts_command_exists():
     assert runner.invoke(app, ["contexts", "--help"]).exit_code == 0
 
 
+def test_pins_command_exists():
+    assert runner.invoke(app, ["pins", "--help"]).exit_code == 0
+
+
 def test_ported_verbs_still_exist():
     for verb in ("click", "type", "press", "select", "find", "snapshot",
                  "screenshot", "navigate", "open", "close", "scroll", "highlight"):

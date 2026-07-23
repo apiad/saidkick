@@ -102,9 +102,23 @@ long the call blocks. They are independent. Statuses:
 While a human holds control your mutating calls fail with `HumanHoldsControl`. That is expected.
 Keep reading the page if you want to follow along.
 
-## Pointing at something
+## Using a pin
 
-When you need the human to look at a specific element, ring it and screenshot:
+A pin is an element a **human** pointed at in the cockpit — "this is the thing I mean." You cannot
+create one; you list and read them, and act on them.
+
+When the user tells you to work on something they highlighted, or when you can't tell which element
+they mean, check `list_pins` (CLI: `saidkick pins --context C`). Each pin has a `handle`. Act on it
+by passing `handle=` to `click`, `type`, etc. — no locator needed, it's exactly the element they
+pointed at.
+
+If acting on a handle returns `StaleHandle`, the page changed and the pin no longer resolves.
+`read_pin` gives you the element's durable `css`, `xpath`, and a `suggested_locator` — use one of
+those instead.
+
+## Pointing at something yourself
+
+When *you* need the human to look at a specific element, ring it and screenshot:
 
 ```bash
 saidkick highlight --tab "$TAB" --by-text "Deploy"
