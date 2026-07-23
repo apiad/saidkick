@@ -2,7 +2,7 @@
 
 # 🫰 Saidkick
 
-**A self-hosted sidekick that lets your terminal drive your browser.**
+**A browser for agents, supervised by humans.**
 
 ![PyPI - Version](https://img.shields.io/pypi/v/saidkick)
 ![PyPi - Python Version](https://img.shields.io/pypi/pyversions/saidkick)
@@ -13,199 +13,228 @@
 
 ---
 
-Saidkick is a small, opinionated tool that lets scripts, shells, and AI agents drive a real browser end-to-end — listing tabs, navigating, clicking, typing into any rich-text field, dispatching keyboard events, taking screenshots — without the overhead of a full headless automation framework. It uses a FastAPI server as a hub and a Chrome extension as the spoke; you run `saidkick start`, install the extension once, and then every command in every language with an HTTP client can talk to a real, logged-in Chrome session.
+Saidkick is a browser designed to be driven by AI agents, with a human watching over its
+shoulder. Agents open isolated browsing contexts, read pages as accessibility snapshots, click
+and type — and when they hit a CAPTCHA, a 2FA prompt, or a login wall, they **ask for a human**,
+who takes the wheel in a live cockpit, does the thing, and hands control back.
 
-It's the right size for **terminal-driven debugging, agent automation, and personal scripting** — not quite Playwright (which needs its own browser, its own auth, its own set of tricks to look "real") and not quite a remote-control MCP (which is gated on a specific agent runtime). Saidkick lives in the middle: your browser, your session, your cookies, driven from anywhere with `curl`.
+One Python daemon owns Chromium through Playwright and serves three surfaces: an **MCP** server
+for agents, a **REST + WebSocket** API for scripts, and a **web cockpit** for you.
 
-## ⚡ Features
+> **Saidkick 2.0 is a rewrite.** The Chrome extension is gone. See
+> [Migrating from 1.x](#-migrating-from-1x).
 
-* **🎯 Semantic locators.** Target elements by what the user sees: `--by-text "Send"`, `--by-label "Password"`, `--by-placeholder "Search…"`. Falls back to CSS/XPath when you need precision. `--by-text` returns the **leaf-most** match — an ancestor that matches only because a descendant does is dropped, so nested text doesn't trip a spurious "ambiguous locator".
-* **🧭 Scroll-into-view.** `saidkick scroll --tab $TAB --by-text "Chapter 3"` brings an element into the viewport — essential before screenshotting something offscreen, and handy for pulling more content on infinite-scroll pages.
-* **🔴 Highlight.** `saidkick highlight --tab $TAB --by-text "Deploy"` draws a temporary red ring around an element. Use it to point the user at *exactly* what to click when you're guiding them — pair with `screenshot` and they see the ring in the image.
-* **🔤 Real keyboard events.** `saidkick press Enter --tab $TAB` dispatches a native CDP `Input.dispatchKeyEvent` — frameworks (Lexical, ProseMirror, React) treat it as a real keystroke, not a synthesised blob.
-* **📸 Screenshots.** `saidkick screenshot --tab $TAB --output /tmp/shot.png` via CDP `Page.captureScreenshot`. Optional locator clips to an element; `--full-page` captures beyond the viewport.
-* **✍️ Rich-text input.** `saidkick type` understands `contenteditable` via `document.execCommand("insertText", …)` — works on WhatsApp, Slack, Discord, Gmail compose, GitHub comments, Notion, and every other Lexical/ProseMirror/Quill/Slate/Draft-backed editor.
-* **⏳ Wait-for-element built in.** `--wait-ms N` on every selector-using command polls the DOM until it resolves. Default 0 preserves fail-fast behaviour.
-* **🧵 Multi-browser, multi-tab.** Each extension connection gets an ephemeral `br-XXXX` ID; commands address tabs as `br-XXXX:N` composites. Pipe the output of `saidkick open` straight into the next command. `saidkick close --tab T` disposes of a tab when you're done.
-* **🩺 Health check.** `saidkick doctor` names the exact connection state — server down, server up with no browser, or connected — and the next action, surfacing connected browser ids even when a browser reports zero tabs.
-* **📦 JS with arguments.** `saidkick exec --tab T "return args[0]" --arg foo` passes values into the executed function (read via `args[0]`, `args[1]`, …); each `--arg` is JSON-parsed, else kept as a raw string.
-* **🛡️ CSP bypass.** Runs scripts via `chrome.debugger` on pages that block content-script injection.
-* **🐚 Pipe-friendly CLI.** One token per stdout (`saidkick open` prints `br-XXXX:N`; `saidkick screenshot` emits raw PNG bytes). Everything composes in bash.
+## ⚡ Why
+
+Driving Chrome from outside is a fight with its security model. `chrome.debugger` is the only
+route to CDP, MV3 kills the service worker on idle, CSP blocks injection, and the accessibility
+tree is unreachable from a content script. Every feature ends up shaped by the sandbox rather
+than the problem.
+
+Saidkick 2.0 makes the agent a **first-class principal** in the browser instead of a tolerated
+intruder — and gives the human a supervisory seat instead of no seat at all.
 
 ## 🚀 Quickstart
 
-### Install
-
 ```bash
 pip install saidkick
+playwright install chromium
+
+saidkick serve            # daemon + live dashboard; cockpit on http://localhost:6992
 ```
 
-Or pull the latest from GitHub:
+Then, in another terminal:
 
 ```bash
-pip install git+https://github.com/apiad/saidkick.git
+TAB=$(saidkick quick https://example.com)   # ephemeral context + tab in one call
+saidkick snapshot --tab "$TAB"
+# - heading "Example Domain" [level=1]
+# - paragraph: This domain is for use in documentation examples…
+# - link "Learn more"
+
+saidkick click --tab "$TAB" --by-role link --by-text "Learn more"
+saidkick screenshot --tab "$TAB" --output /tmp/shot.png
 ```
 
-### Load the extension
+Point an MCP client at **`http://localhost:6992/mcp`**.
 
-1. Open `chrome://extensions/` in Chrome.
-2. Enable **Developer mode**.
-3. Click **Load unpacked** and point at `src/saidkick/extension/` (inside the cloned repo, or inside your installed `saidkick` package — `python -c "import saidkick, os; print(os.path.dirname(saidkick.__file__) + '/extension')"`).
+## 🧩 The model
 
-The extension connects to `ws://localhost:6992/ws` and auto-reconnects every 5 seconds if the server comes and goes.
+Three layers, and the distinction between the middle two is what makes end-to-end testing work.
 
-### Start the server and drive
+| | |
+|---|---|
+| **Profile** | A named on-disk storage partition. *(VS3 — not in this release.)* |
+| **Context** | An isolated cookie jar and storage partition. Two contexts cannot see each other's logins. |
+| **Tab** | A page inside a context, addressed `ctx_a1b2:3`. Tabs in one context share session state. |
 
-```bash
-# Terminal 1: start the hub
-$ saidkick start
+Contexts today are **ephemeral**: they start empty and are discarded on close. That is the right
+default — reproducible, and incapable of damaging real logged-in state.
 
-# Terminal 2: list connected tabs
-$ saidkick tabs
-br-a1b2:12  https://example.com/  "Example Domain"  (active)
-br-a1b2:15  https://docs.python.org/  "Python 3.12 Docs"
+## 🙋 The human in the loop
 
-# Open a new tab, talk to it, screenshot the result
-$ BR=br-a1b2
-$ TAB=$(saidkick open --browser "$BR" https://example.com/)
-$ saidkick text --tab "$TAB" --css "h1"
-Example Domain
-$ saidkick screenshot --tab "$TAB" --output /tmp/shot.png
-Wrote 28934 bytes to /tmp/shot.png
+The point of saidkick. An agent that cannot get past a CAPTCHA calls `request_human`:
+
+```
+agent  → request_human(context, "enter the 2FA code")
+       ← still_waiting            ... and it tells its operator so
+you    → open the cockpit, hit "Take over"
+agent  → click(...)  ✗ HumanHoldsControl      (but snapshot/find still work)
+you    → type the code, hit "Release" with a note
+agent  ← resolved, note="code entered"        ... and carries on
 ```
 
-## 🎮 Driving a chat app end-to-end
+**Every context has exactly one controller** — `agent` or `human`. While you hold it, the agent's
+mutating calls fail fast rather than queueing, because an error it can read beats a silent block.
+Read-only calls keep working, so it can watch the rescue it asked for.
 
-No `exec`, no selector archaeology — just semantic locators and a keystroke:
+`request_human` takes two independent durations: **`deadline_s`** (how long the request stays
+open, default 600) and **`poll_s`** (how long the call blocks, default 120). An agent that wants
+to wait longer loops on `still_waiting`. A timeout closes the request and touches nothing else —
+reaping a half-finished login would destroy exactly the state you were about to rescue.
 
-```bash
-TAB=br-a1b2:15
-saidkick click  --tab "$TAB" --by-text "Alice Chen"
-saidkick type   "Hello Alice" --tab "$TAB" --by-label "Type a message"
-saidkick press  Enter --tab "$TAB"
-saidkick screenshot --tab "$TAB" --output /tmp/sent.png
+### How you find out
+
+Three channels, none of which need configuring:
+
+1. **The terminal** running `saidkick serve` shows a live dashboard with pending requests at the
+   top — reason, elapsed, remaining, and the cockpit URL.
+2. **The agent itself.** Its MCP tool description obliges it to relay the request through its own
+   channel to its own operator. This is the one that works when the daemon is headless on a
+   server and nobody is watching anything.
+3. **The page.** When headful, the tab raises itself, shows a banner, pulses its border, and
+   marks its title and favicon. The overlay is `aria-hidden` inside a closed shadow root, so the
+   agent never sees it and never tries to click it.
+
+Plus an optional `notify.webhook_url`, off by default, unbranded — wire it to whatever you use.
+Saidkick ships no integration with any chat, mail, or push provider.
+
+## 🤖 The agent surface (MCP)
+
+| Group | Tools |
+|---|---|
+| Contexts | `list_contexts`, `open_context`, `close_context` |
+| Tabs | `list_tabs`, `open_tab`, `close_tab`, `navigate` |
+| Reading | `snapshot_page`, `screenshot`, `find` |
+| Acting | `click`, `type`, `press`, `select`, `highlight` |
+| Human loop | `request_human`, `control_state` |
+| Diagnostics | `get_events` |
+
+**`snapshot_page` is the one that matters**, and it defaults to `mode="aria"`:
+
+```
+- heading "Form" [level=1]
+- textbox "Username":
+  - /placeholder: your name
+- combobox "Country"
+- button "Send"
 ```
 
-That's WhatsApp Web, Slack, Discord, Gmail compose, or any similar app, in four lines.
+Every entry carries a role and an accessible name that map *directly* onto a locator — read
+`button "Send"`, then click with `by_role="button", by_text="Send"`. `mode="html"` exists and is
+a last resort: it floods the context window and tells the agent nothing `aria` doesn't.
 
-## 🧭 Pointing the user at something
+## 🎯 Locators
 
-When an agent is guiding the user through an app, it often needs to say "click *this* button." Two primitives make that precise:
+Target elements the way a user sees them. Set exactly one of `--css`, `--xpath`, `--by-text`,
+`--by-label`, `--by-placeholder`, `--by-role` (which may be combined with `--by-text` as the
+accessible name). Refine with `--within-css`, `--nth`, `--exact`, `--regex`, `--wait-ms`.
 
-```bash
-# Scroll the element into view (it may be offscreen)
-saidkick scroll --tab "$TAB" --by-text "Deploy"
-
-# Draw a temporary red ring around it (default 2s)
-saidkick highlight --tab "$TAB" --by-text "Deploy"
-
-# Screenshot so the user sees the ring in the image too
-saidkick screenshot --tab "$TAB" --output /tmp/click-this.png
-```
-
-Good uses:
-
-- **"Click that button"** — highlight + screenshot + send the image to the user.
-- **"The error is in this field"** — `highlight --color "#f59e0b"` (amber) on a form field the user needs to correct.
-- **Pre-screenshot framing** — `scroll` before `screenshot` so what you want to capture is actually in the viewport.
-- **Checklist walkthroughs** — highlight each step as you narrate it; use `--duration-ms 0` to keep the ring up until you place the next one.
-- **Infinite-scroll content extraction** — scroll to the last visible item, wait for more to load, repeat.
-
-`scroll` takes `--block {center|start|end|nearest}` and `--behavior {auto|smooth}`. `highlight` takes `--color` (any CSS color) and `--duration-ms` (0 = persist until page reload).
+`--by-text` returns the **leaf-most** match, so nested text doesn't trip a spurious ambiguity.
+When a locator does match several elements, the error carries the candidate list so you can pick
+with `--nth` instead of guessing.
 
 ## 🧭 Command reference
 
 | Command | What it does |
 |---|---|
-| `saidkick start` | Start the FastAPI hub (defaults to `127.0.0.1:6992`). |
-| `saidkick doctor` | Report connection state (server/browsers/tabs) and the next action. |
-| `saidkick tabs` | List tabs across connected browsers (`--active` filter). |
-| `saidkick find --tab T --by-text X` | Return JSON list of matching elements (debug). |
-| `saidkick dom --tab T --css X` | Outer-HTML of matched element(s). |
-| `saidkick text --tab T [--css X]` | `innerText` of the tab or a scoped region. |
-| `saidkick click --tab T --by-text X` | Click. |
-| `saidkick type "msg" --tab T --by-label X` | Type (contenteditable-aware). |
-| `saidkick select "value" --tab T --css X` | Select an `<option>`. |
-| `saidkick press Enter --tab T [--mod ctrl,shift]` | Dispatch a keyboard event. |
-| `saidkick scroll --tab T --by-text X [--block center\|start\|end]` | Scroll element into view. |
-| `saidkick highlight --tab T --by-text X [--color red] [--duration-ms N]` | Temporary ring around an element. |
-| `saidkick screenshot --tab T [--output PATH]` | Capture PNG. |
-| `saidkick navigate URL --tab T [--wait dom\|full\|none]` | Redirect a tab. |
-| `saidkick open URL --browser BR` | New tab; prints the composite `br-XXXX:N`. |
-| `saidkick close --tab T` | Close a tab. |
-| `saidkick exec --tab T "return …" [--arg V …]` | Arbitrary JS via CDP (must `return` a value); `--arg` passes values, read as `args[0]`, `args[1]`, … |
-| `saidkick logs [--grep X] [--browser BR]` | Console-log buffer. |
+| `saidkick serve` | Run the daemon: engine, REST, MCP at `/mcp`, cockpit, dashboard. |
+| `saidkick quick URL` | Ephemeral context + tab in one call; prints the tab id. |
+| `saidkick contexts` / `tabs --context C` | List contexts / tabs. |
+| `saidkick snapshot --tab T [--mode aria\|text\|html]` | Read the page. |
+| `saidkick find --tab T <locator>` | Describe matching elements. |
+| `saidkick click / type / press / select / scroll / highlight` | Act on an element. |
+| `saidkick screenshot --tab T [--output PATH]` | Capture a PNG. |
+| `saidkick navigate URL --tab T` / `open URL --context C` / `close --tab T` | Tab plumbing. |
+| `saidkick requests` | Show pending human requests. |
 
-Every selector-using command accepts the same locator options: `--css`, `--xpath`, `--by-text`, `--by-label`, `--by-placeholder`, `--within-css`, `--nth`, `--exact`, `--regex`, `--wait-ms`. Exactly one locator must be set (400 otherwise).
+`SAIDKICK_URL` points the CLI and client at a daemon on another port or host.
 
 ## 🐍 Python client
 
-Everything the CLI does is also available as a library:
-
 ```python
 from saidkick.client import SaidkickClient
+
 c = SaidkickClient()
-
-tabs = c.list_tabs(active=True)
-tab = tabs[0]["tab"]
-
-# Search for something on DuckDuckGo
-c.type(tab, "saidkick", css="input[name=q]")
-c.press(tab, "Enter")
-
-# Screenshot the results
-shot = c.screenshot(tab)
-import base64; open("/tmp/ddg.png", "wb").write(base64.b64decode(shot["png_base64"]))
-
-# Run JS with arguments, check health, and clean up
-title = c.execute(tab, "return document.title.startsWith(args[0])", args=["Results"])
-print(c.doctor()["state"])   # "connected" | "no-browsers"
-c.close(tab)
+tab = c.quick("https://example.com")
+print(c.snapshot(tab))
+c.click(tab, by_role="link", by_text="Learn more")
+open("/tmp/shot.png", "wb").write(c.screenshot(tab))
 ```
 
 ## 🧱 Architecture
 
-**Hub-and-spoke.** The FastAPI server is the hub; the Chrome extension (MV3) is the spoke.
-
 ```
-┌──────────────┐      WebSocket       ┌────────────────────────────┐
-│ Your CLI/    │◀───────▶ hub ────────│ Chrome MV3 extension       │
-│ agent/script │    REST              │  • service worker          │
-└──────────────┘                      │  • content + main-world    │
-                                      │  • popup w/ reconnect      │
-                                      └────────────────────────────┘
+saidkick.engine     Playwright. Contexts, tabs, locators, actions, screencast.
+                    Knows nothing about HTTP, agents, or humans.
+saidkick.control    Arbitration, human requests, event bus.
+saidkick.api        FastAPI: REST + WebSockets + mounted MCP.
+saidkick.cockpit    The human UI: live view, takeover, request queue.
+saidkick.client     SaidkickClient + Typer CLI.
 ```
 
-- The **hub** is stateless between restarts except for a circular log buffer and the set of live WebSocket connections.
-- The **spoke** stores an ephemeral `br-XXXX` ID on handshake, runs content scripts in every tab on demand (with lazy injection fallback), and drives CDP via `chrome.debugger` for JS execution, keyboard events, screenshots, and page-load waits.
-- Tabs are addressed by the composite `br-XXXX:N` — `br-XXXX` identifies the browser connection; `N` is Chrome's native `tab.id`.
+The seam between `engine` and `control` is deliberate: browser semantics are tested against a
+local fixture site without simulating a human, and arbitration is tested as a state machine
+without a browser.
 
-The extension popup shows current connection state and a reconnect button — useful when the MV3 service worker goes idle.
+The cockpit streams CDP JPEG frames over a WebSocket and draws them to a canvas — quality 60 at
+1280px while you watch, 95 at native resolution the moment you take control. Input goes back as
+`Input.dispatchMouseEvent` / `dispatchKeyEvent`, with a paste box that uses `Input.insertText`
+because a 2FA code should be inserted, not synthesised as thirty keystrokes.
 
-## 📖 Docs
+**Note on hostnames:** the MCP SDK enables DNS-rebinding protection and allows `127.0.0.1:*`,
+`localhost:*` and `[::1]:*`. Reaching `/mcp` through a reverse proxy on a real hostname needs
+`allowed_hosts` widened explicitly.
 
-- [User Guide](docs/user-guide.md) — full CLI / REST / client reference.
-- [Design Doc](docs/design.md) — architecture, error policy, protocol details.
-- [Deploy Guide](docs/deploy.md) — server + extension setup.
-- [SKILL.md](SKILL.md) — how an AI agent should use saidkick.
-- [CHANGELOG](CHANGELOG.md) — release history.
+## 📦 Migrating from 1.x
 
-## 🤝 Why saidkick (vs. …)
+**The Chrome extension is deleted**, and with it the whole hub-and-spoke design.
 
-- **vs. Playwright / Selenium.** Those spawn their own browser with a fresh profile — no cookies, no logins, no browser extensions. Saidkick drives *your* Chrome, logged in, with the session state you already have. Trade-off: you're automating the real thing, so destructive actions are real.
-- **vs. `claude-in-chrome` / MCP browser tools.** Saidkick is self-hosted and agent-agnostic. Anything with an HTTP client can use it — shell scripts, cron jobs, arbitrary Python, any LLM runtime. Not gated on a specific agent host or credential.
-- **vs. raw Chrome DevTools Protocol.** CDP is powerful but verbose. Saidkick wraps the patterns you actually use (locators, keyboard, screenshots, waits) behind one-line CLI commands.
+| 1.x | 2.0 |
+|---|---|
+| `saidkick start` | `saidkick serve` |
+| `br-a1b2:15` | `ctx_a1b2:3` |
+| `saidkick dom` / `text` | `saidkick snapshot --mode html` / `--mode text` |
+| `saidkick exec`, `logs`, `doctor`, `mirror` | *removed with the extension that backed them* |
+| drives your real Chrome | drives its own Chromium |
+
+**Contexts start logged into nothing.** The first time an agent hits a login wall it pauses, you
+authenticate through takeover, and from VS3 onward `save_profile` will make that durable. This is
+the same mechanic as the 2FA flow, applied to bootstrapping.
+
+Scripts that hardcode a `br-XXXX:N` id will break. There is no compatibility shim — deleting the
+extension is most of the point.
 
 ## 🛠️ Development
 
 ```bash
-git clone https://github.com/apiad/saidkick
-cd saidkick
 uv sync --all-groups
-uv run pytest -m "not e2e"   # unit + integration
-uv run saidkick start        # hub
+uv run playwright install chromium
+
+uv run pytest -m "not browser"   # fast: no Chromium
+uv run pytest -m browser         # against a local fixture site
+uv run saidkick serve --headful  # watch it work
 ```
+
+## 🗺️ Status
+
+Shipped: isolated contexts and tabs, ARIA snapshots, the full locator vocabulary, actions, MCP,
+REST, the cockpit with live view and takeover, control arbitration, `request_human`, the terminal
+dashboard, and the attention overlay.
+
+Next: persistent profiles and `save_profile`; **pins** (click or drag on the live view to hand
+the agent a DOM reference — "*this* is the thing"); a run log and trace replay.
 
 ## 📜 License
 
-MIT — see [LICENSE](LICENSE) if present, otherwise standard MIT applies.
+MIT.

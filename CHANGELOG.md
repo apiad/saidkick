@@ -4,6 +4,64 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-23
+
+Saidkick is now a browser built for agents, with a human supervising it — not a
+tool for driving your existing Chrome.
+
+### Breaking
+
+- **The Chrome MV3 extension is deleted**, and with it the hub-and-spoke design,
+  the `br-XXXX` addressing scheme, the content-script locator engine, the
+  offscreen document, and console mirroring. There is no compatibility shim.
+- `saidkick start` → **`saidkick serve`**.
+- Tab ids: `br-a1b2:15` → **`ctx_a1b2:3`**.
+- Removed commands: `exec`, `logs`, `doctor`, `mirror` — all backed by the
+  extension. `dom` and `text` are folded into `snapshot --mode html|text`.
+- **Contexts start logged into nothing.** Saidkick drives its own Chromium, not
+  your personal profile.
+- `SaidkickClient` is rewritten around contexts and tabs.
+
+### Added
+
+- **Isolated browsing contexts.** Each context is its own cookie jar and storage
+  partition; tabs inside one share a session. Ephemeral by default.
+- **ARIA snapshots** (`snapshot --mode aria`, the default) — a compact outline
+  where every entry carries a role and accessible name that map directly onto a
+  locator.
+- **MCP server** mounted at `/mcp`, with tool descriptions written as
+  obligations rather than summaries.
+- **Web cockpit** — live CDP screencast on a canvas, quality 60/1280 while
+  observing and 95/native the moment a human takes control.
+- **Human-in-the-loop.** `request_human` with independent `deadline_s` and
+  `poll_s`; every context has exactly one controller; agent mutations fail fast
+  with `HumanHoldsControl` while a human drives, and reads keep working.
+- **Takeover** — mouse, keyboard and wheel forwarded over CDP, plus a paste box
+  using `Input.insertText` for 2FA codes. Control releases automatically when
+  the control socket closes.
+- **Three announcement channels**: a live Rich dashboard in the serving
+  terminal, an obligation in the `request_human` tool description for the agent
+  to relay through its own channel, and an in-page attention overlay that is
+  invisible to the accessibility snapshot.
+- **`saidkick quick URL`** — context and tab in one call, so one-liners stay
+  one-liners.
+- `SAIDKICK_URL` to point the CLI and client at another daemon.
+- A closed error set with stable codes and HTTP mapping.
+- `--headful` for watching the browser work.
+
+### Fixed
+
+- MCP is served at `/mcp` rather than `/mcp/mcp` (`streamable_http_path`
+  defaults to `/mcp` inside the mounted app).
+
+### Notes
+
+- Persistent profiles, `save_profile`, pins, the run log and trace replay are
+  the next slice and are not in this release.
+- The MCP SDK enables DNS-rebinding protection: `127.0.0.1:*`, `localhost:*`
+  and `[::1]:*` are allowed, so a reverse proxy on a real hostname needs
+  `allowed_hosts` widened.
+
 ## [0.7.2] - 2026-07-02
 
 ### Added
