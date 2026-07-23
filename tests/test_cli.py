@@ -38,6 +38,14 @@ def test_pins_command_exists():
     assert runner.invoke(app, ["pins", "--help"]).exit_code == 0
 
 
+def test_profiles_command_exists():
+    assert runner.invoke(app, ["profiles", "--help"]).exit_code == 0
+
+
+def test_save_profile_command_exists():
+    assert runner.invoke(app, ["save-profile", "--help"]).exit_code == 0
+
+
 def test_ported_verbs_still_exist():
     for verb in ("click", "type", "press", "select", "find", "snapshot",
                  "screenshot", "navigate", "open", "close", "scroll", "highlight"):

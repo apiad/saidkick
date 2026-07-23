@@ -130,7 +130,14 @@ def create_app(
 
     @app.post("/contexts")
     async def open_context(body: dict = Body(default={})):
-        ctx = await engine.open_context(viewport=body.get("viewport"))
+        try:
+            ctx = await engine.open_context(
+                profile=body.get("profile"),
+                mode=body.get("mode", "ephemeral"),
+                viewport=body.get("viewport"),
+            )
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"error": "BadMode", "detail": str(exc)})
         events.emit(ctx.id, "context_opened")
         return ctx.info()
 
@@ -138,6 +145,24 @@ def create_app(
     async def close_context(cid: str):
         await engine.close_context(cid)
         events.emit(cid, "context_closed")
+        return {"ok": True}
+
+    @app.post("/contexts/{cid}/save-profile")
+    async def save_profile(cid: str, body: dict = Body(...)):
+        try:
+            out = await engine.save_profile(cid, body["name"])
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"error": "BadName", "detail": str(exc)})
+        events.emit(cid, "profile_saved", profile=body["name"])
+        return out
+
+    @app.get("/profiles")
+    async def list_profiles():
+        return engine.store.list()
+
+    @app.delete("/profiles/{name}")
+    async def delete_profile(name: str):
+        engine.store.delete(name)
         return {"ok": True}
 
     @app.get("/contexts/{cid}/tabs")

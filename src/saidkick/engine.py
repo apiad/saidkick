@@ -24,6 +24,7 @@ from playwright.async_api import (
 from playwright.async_api import Error as PWError
 
 from . import errors as E
+from .profiles import ProfileStore
 
 if TYPE_CHECKING:  # pragma: no cover
     from .control import Controller
@@ -59,13 +60,30 @@ class ManagedTab:
 class ManagedContext:
     """A live browsing session. Owns its tabs and their CDP sessions."""
 
-    def __init__(self, ctx_id: str, pw_context: BrowserContext, engine: "Engine"):
+    def __init__(
+        self,
+        ctx_id: str,
+        pw_context: BrowserContext,
+        engine: "Engine",
+        profile: str | None = None,
+        mode: str = "ephemeral",
+    ):
         self.id = ctx_id
         self.pw_context = pw_context
         self.engine = engine
+        self.profile = profile
+        self.mode = mode
         self._tabs: dict[str, ManagedTab] = {}
         self._cdp: dict[str, CDPSession] = {}
         self._next_tab = 1
+
+    def adopt_existing_pages(self) -> None:
+        """Register pages the context was born with (a persistent context opens
+        with one blank page) so list_tabs stays truthful and they are not leaked."""
+        for page in self.pw_context.pages:
+            tab_id = f"{self.id}:{self._next_tab}"
+            self._next_tab += 1
+            self._tabs[tab_id] = ManagedTab(tab_id, page, self)
 
     @property
     def controller(self):
@@ -113,7 +131,8 @@ class ManagedContext:
         state = self.controller.state(self.id) if self.controller else "agent"
         return {
             "id": self.id,
-            "mode": "ephemeral",
+            "mode": self.mode,
+            "profile": self.profile,
             "controller": state,
             "tabs": self.list_tabs(),
         }
@@ -132,12 +151,21 @@ class ManagedContext:
 class Engine:
     """Owns Playwright and the live contexts."""
 
-    def __init__(self, headless: bool = True, controller: "Controller | None" = None):
+    def __init__(
+        self,
+        headless: bool = True,
+        controller: "Controller | None" = None,
+        store: "ProfileStore | None" = None,
+    ):
         self.headless = headless
         self.controller = controller
+        self.store = store if store is not None else ProfileStore()
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._contexts: dict[str, ManagedContext] = {}
+        # profile -> ctx_id of its live attached context. ProfileLocked is a
+        # daemon invariant: Chromium does not lock a headless user-data-dir.
+        self._attached: dict[str, str] = {}
 
     @property
     def is_running(self) -> bool:
@@ -156,6 +184,7 @@ class Engine:
             except PWError:
                 pass
         self._contexts.clear()
+        self._attached.clear()
         if self._browser is not None:
             await self._browser.close()
             self._browser = None
@@ -163,16 +192,67 @@ class Engine:
             await self._pw.stop()
             self._pw = None
 
-    async def open_context(self, viewport: dict[str, int] | None = None) -> ManagedContext:
-        if self._browser is None:
-            raise E.EngineCrashed("engine is not started")
-        pw_ctx = await self._browser.new_context(viewport=viewport or DEFAULT_VIEWPORT)
+    def _new_ctx_id(self) -> str:
         ctx_id = f"ctx_{secrets.token_hex(2)}"
         while ctx_id in self._contexts:  # pragma: no cover - 1-in-65536
             ctx_id = f"ctx_{secrets.token_hex(2)}"
-        ctx = ManagedContext(ctx_id, pw_ctx, self)
+        return ctx_id
+
+    async def open_context(
+        self,
+        profile: str | None = None,
+        mode: str = "ephemeral",
+        viewport: dict[str, int] | None = None,
+    ) -> ManagedContext:
+        if self._pw is None:
+            raise E.EngineCrashed("engine is not started")
+        viewport = viewport or DEFAULT_VIEWPORT
+        ctx_id = self._new_ctx_id()
+
+        if mode == "attached":
+            if not profile:
+                raise ValueError("attached mode requires a profile")
+            if profile in self._attached:
+                raise E.ProfileLocked(
+                    f"profile {profile!r} already has a live attached context "
+                    f"({self._attached[profile]}); close it first"
+                )
+            self.store.userdata(profile).mkdir(parents=True, exist_ok=True)
+            pw_ctx = await self._pw.chromium.launch_persistent_context(
+                str(self.store.userdata(profile)),
+                headless=self.headless,
+                viewport=viewport,
+            )
+            ctx = ManagedContext(ctx_id, pw_ctx, self, profile=profile, mode="attached")
+            # A persistent context opens with one blank page; adopt it so it is
+            # tracked rather than leaked.
+            ctx.adopt_existing_pages()
+            self._attached[profile] = ctx_id
+        elif mode == "ephemeral":
+            if self._browser is None:
+                raise E.EngineCrashed("engine is not started")
+            seed = None
+            if profile and self.store.state_file(profile).is_file():
+                seed = str(self.store.state_file(profile))
+            pw_ctx = await self._browser.new_context(viewport=viewport, storage_state=seed)
+            ctx = ManagedContext(ctx_id, pw_ctx, self, profile=profile, mode="ephemeral")
+        else:
+            raise ValueError(f"unknown context mode: {mode!r} (expected ephemeral or attached)")
+
         self._contexts[ctx_id] = ctx
         return ctx
+
+    async def save_profile(self, ctx_id: str, name: str) -> dict:
+        """Capture a context's storage state to disk, so the next context on this
+        profile starts logged in. This is how a human-solved login becomes durable."""
+        ctx = self.get_context(ctx_id)
+        state = await ctx.pw_context.storage_state()
+        self.store.save_state(name, state)
+        return {
+            "profile": name,
+            "cookies": len(state.get("cookies", [])),
+            "origins": len(state.get("origins", [])),
+        }
 
     def get_context(self, ctx_id: str) -> ManagedContext:
         try:
@@ -183,6 +263,8 @@ class Engine:
     async def close_context(self, ctx_id: str) -> None:
         ctx = self.get_context(ctx_id)
         await ctx.close()
+        if ctx.profile and self._attached.get(ctx.profile) == ctx_id:
+            del self._attached[ctx.profile]
         del self._contexts[ctx_id]
 
     def list_contexts(self) -> list[dict]:

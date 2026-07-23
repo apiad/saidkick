@@ -57,9 +57,23 @@ class SaidkickClient:
     def list_contexts(self) -> list[dict]:
         return self._json(self._client.get("/contexts"))
 
-    def open_context(self, viewport: dict | None = None) -> dict:
-        body = {"viewport": viewport} if viewport else {}
+    def open_context(
+        self, profile: str | None = None, mode: str = "ephemeral", viewport: dict | None = None
+    ) -> dict:
+        body: dict[str, Any] = {"mode": mode}
+        if profile:
+            body["profile"] = profile
+        if viewport:
+            body["viewport"] = viewport
         return self._json(self._client.post("/contexts", json=body))
+
+    def list_profiles(self) -> list[dict]:
+        return self._json(self._client.get("/profiles"))
+
+    def save_profile(self, context: str, name: str) -> dict:
+        return self._json(
+            self._client.post(f"/contexts/{context}/save-profile", json={"name": name})
+        )
 
     def close_context(self, context: str) -> dict:
         return self._json(self._client.delete(f"/contexts/{context}"))

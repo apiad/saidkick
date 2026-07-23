@@ -132,7 +132,10 @@ def contexts():
     """List live browsing contexts."""
     try:
         for ctx in _client().list_contexts():
-            console.print(f"{ctx['id']}  {ctx['controller']:<6} {len(ctx['tabs'])} tab(s)")
+            prof = f" [{ctx['mode']}:{ctx['profile']}]" if ctx.get("profile") else f" [{ctx['mode']}]"
+            console.print(
+                f"{ctx['id']}  {ctx['controller']:<6} {len(ctx['tabs'])} tab(s){prof}"
+            )
     except Exception as exc:
         handle_client_error(exc)
 
@@ -152,6 +155,40 @@ def quick(url: str):
     """Open an ephemeral context and a tab in one call; print the tab id."""
     try:
         print(_client().quick(url))
+    except Exception as exc:
+        handle_client_error(exc)
+
+
+@app.command()
+def profiles():
+    """List saved profiles."""
+    try:
+        found = _client().list_profiles()
+        if not found:
+            console.print("[dim]no profiles[/dim]")
+        for prof in found:
+            marks = []
+            if prof["has_state"]:
+                marks.append("seeded")
+            if prof["has_userdata"]:
+                marks.append("attached")
+            console.print(f"{prof['name']:<20} {', '.join(marks) or 'empty'}")
+    except Exception as exc:
+        handle_client_error(exc)
+
+
+@app.command("save-profile")
+def save_profile(
+    context: str = typer.Option(..., "--context"),
+    name: str = typer.Option(..., "--name"),
+):
+    """Save a context's login to a named profile."""
+    try:
+        out = _client().save_profile(context, name)
+        console.print(
+            f"saved [green]{out['profile']}[/green]: "
+            f"{out['cookies']} cookie(s), {out['origins']} origin(s)"
+        )
     except Exception as exc:
         handle_client_error(exc)
 

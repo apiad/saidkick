@@ -102,16 +102,29 @@ def build_mcp(
         description=(
             "Open a new browsing context and return its id. A context is an isolated cookie "
             "jar and storage partition: two contexts cannot see each other's logins, and "
-            "tabs inside one context share session state.\n\n"
-            "Contexts are EPHEMERAL — they start with empty storage and are discarded when "
-            "closed. That is the correct default: it is reproducible and it cannot damage "
-            "real logged-in state. Open one context per task rather than reusing one for "
-            "unrelated work."
+            "tabs inside one context share session state. Open one context per task.\n\n"
+            "mode='ephemeral' (default) starts from empty storage — or, if you name a "
+            "`profile`, is SEEDED from that profile's saved login (cookies + localStorage, "
+            "but NOT IndexedDB). It is discarded on close and cannot damage saved state, so "
+            "it is the safe default.\n\n"
+            "mode='attached' requires a `profile` and opens its persistent on-disk storage, "
+            "writing changes back — this is 'act as the real signed-in user'. Only ONE "
+            "attached context per profile may be live at once (else ProfileLocked). Use it "
+            "when you need to modify a real logged-in account; prefer ephemeral otherwise.\n\n"
+            "To make a login durable: open ephemeral, hit the wall, request_human, let them "
+            "sign in, then call save_profile."
         )
     )
-    async def open_context(viewport_width: int = 1280, viewport_height: int = 800) -> dict:
+    async def open_context(
+        profile: str | None = None,
+        mode: str = "ephemeral",
+        viewport_width: int = 1280,
+        viewport_height: int = 800,
+    ) -> dict:
         ctx = await engine.open_context(
-            viewport={"width": viewport_width, "height": viewport_height}
+            profile=profile,
+            mode=mode,
+            viewport={"width": viewport_width, "height": viewport_height},
         )
         events.emit(ctx.id, "context_opened")
         return ctx.info()
@@ -126,6 +139,30 @@ def build_mcp(
         await engine.close_context(context)
         events.emit(context, "context_closed")
         return {"ok": True}
+
+    @mcp.tool(
+        description=(
+            "List saved profiles: their names, whether each has a seeded login (has_state) "
+            "and persistent storage (has_userdata). Use this to find an existing login you "
+            "can open a context on instead of authenticating again."
+        )
+    )
+    async def list_profiles() -> list[dict]:
+        return engine.store.list()
+
+    @mcp.tool(
+        description=(
+            "Save the current context's login to a named profile, so a future context on "
+            "that profile starts already signed in. This is what you call AFTER a human has "
+            "solved a login or 2FA for you: open ephemeral, request_human, they sign in, "
+            "release, then save_profile(context, 'github'). Captures cookies and localStorage "
+            "(not IndexedDB). Overwrites any existing profile of that name."
+        )
+    )
+    async def save_profile(context: str, name: str) -> dict:
+        out = await engine.save_profile(context, name)
+        events.emit(context, "profile_saved", profile=name)
+        return out
 
     # -- tabs -------------------------------------------------------------
 

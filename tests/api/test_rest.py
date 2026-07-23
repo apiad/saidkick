@@ -99,3 +99,48 @@ async def test_pending_requests_are_listed(client, controller):
     controller.open_request("ctx_a", "solve the captcha", deadline_s=60)
     out = (await client.get("/requests")).json()
     assert out[0]["reason"] == "solve the captcha"
+
+
+@pytest.mark.browser
+async def test_profile_save_seed_and_list_round_trip(tmp_path, controller, fixture_url):
+    """Save a login, then open a seeded ephemeral context that already has it.
+
+    Uses an isolated profile root so the real ~/.saidkick is never touched.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from saidkick.api import create_app
+    from saidkick.engine import Engine
+    from saidkick.profiles import ProfileStore
+
+    engine = Engine(controller=controller, store=ProfileStore(root=tmp_path / "profiles"))
+    await engine.start()
+    try:
+        app = create_app(engine, controller)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+            cid = (await client.post("/contexts")).json()["id"]
+            tid = (
+                await client.post(f"/contexts/{cid}/tabs", json={"url": f"{fixture_url}/form.html"})
+            ).json()["id"]
+            await client.post(f"/tabs/{tid}/type", json={"css": "#u", "text": "kept"})
+            # Persist a localStorage value we can check after seeding.
+            await client.post(
+                f"/tabs/{tid}/find", json={"css": "#u"}
+            )  # ensure page ready
+            saved = (await client.post(f"/contexts/{cid}/save-profile", json={"name": "acme"})).json()
+            assert saved["profile"] == "acme"
+
+            listed = (await client.get("/profiles")).json()
+            assert any(p["name"] == "acme" and p["has_state"] for p in listed)
+
+            # A seeded context reuses the saved cookies/localStorage.
+            seeded = (await client.post("/contexts", json={"profile": "acme"})).json()
+            assert seeded["profile"] == "acme" and seeded["mode"] == "ephemeral"
+    finally:
+        await engine.stop()
+
+
+@pytest.mark.browser
+async def test_attached_without_profile_is_400(client):
+    r = await client.post("/contexts", json={"mode": "attached"})
+    assert r.status_code == 400 and r.json()["error"] == "BadMode"

@@ -22,6 +22,7 @@ VS1_TOOLS = {
 }
 VS2_TOOLS = {"request_human", "control_state"}
 VS4_TOOLS = {"list_pins", "read_pin"}
+VS3_TOOLS = {"list_profiles", "save_profile"}
 
 
 async def _descriptions(engine, controller):
@@ -34,6 +35,20 @@ async def test_all_tools_registered(engine, controller):
     assert VS1_TOOLS <= names
     assert VS2_TOOLS <= names
     assert VS4_TOOLS <= names
+    assert VS3_TOOLS <= names
+
+
+async def test_open_context_documents_modes_and_bootstrapping(engine, controller):
+    d = (await _descriptions(engine, controller))["open_context"].lower()
+    assert "attached" in d and "ephemeral" in d
+    assert "indexeddb" in d  # the ephemeral-seeding caveat
+    assert "save_profile" in d  # the bootstrapping pointer
+
+
+async def test_save_profile_describes_the_human_solved_login_flow(engine, controller):
+    d = (await _descriptions(engine, controller))["save_profile"].lower()
+    assert "request_human" in d or "human" in d
+    assert "signed in" in d or "login" in d
 
 
 async def test_read_pin_tells_the_agent_to_fall_back_on_stale(engine, controller):
