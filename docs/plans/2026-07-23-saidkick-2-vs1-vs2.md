@@ -17,6 +17,44 @@ arbitration be tested without a browser.
 **Tech Stack:** Python 3.12+, `uv`, Playwright 1.61, FastAPI, `mcp` 1.28 (FastMCP), Typer, Rich,
 Pydantic v2, pytest + pytest-asyncio.
 
+
+**Status:** COMPLETE — 2026-07-23. All 20 tasks landed on `main`; gate green
+(ruff clean, 89 non-browser + 94 browser tests). Released as 2.0.0.
+
+**Deviations from the plan as written, and why:**
+
+1. **Task 13 (`control.py`) was pulled forward before Task 4.** `Engine` takes a
+   controller and the `engine` fixture passes one, so the engine could not be
+   verified until the controller existed. `control.py` is pure state machine, so
+   the reorder cost nothing.
+2. **`conftest.py` imports `Engine`/`Controller` lazily inside fixtures.** As
+   written, module-scope imports broke collection for every commit between
+   Tasks 1 and 4. A missing module should fail only the tests that need it.
+3. **`uv remove websockets` was NOT executed.** The step was wrong: uvicorn uses
+   the `websockets` library to serve the WebSocket protocol, so removing it
+   would have broken the screencast and control sockets — the feature VS1 exists
+   for.
+4. **MCP tools take explicit locator parameters, not `**kwargs`.** FastMCP
+   builds the JSON schema from the signature, and `**kwargs` collapses into a
+   single required `locator` object no agent can fill. Explicit parameters also
+   put `by_text`/`by_role`/`by_label` in the schema by name.
+5. **The snapshot tool is `snapshot_page`**, not `snapshot`, to avoid shadowing
+   the imported function inside `build_mcp`.
+6. **`create_app`'s lifespan starts the engine** when it is not already running.
+   Setting a lifespan (needed for the MCP session manager) silently disables
+   `@app.on_event` handlers, which cost one debugging cycle in Task 19.
+7. **`SAIDKICK_URL` was added** (not in the plan) so the CLI can target another
+   daemon — and so the connect-error test stops depending on whether something
+   happens to be listening on 6992.
+8. **One bug the plan's tests could not have caught**, found by smoke-testing the
+   running daemon: MCP was served at `/mcp/mcp`, because `streamable_http_app()`
+   serves at `settings.streamable_http_path` (default `/mcp`) *inside* the app
+   mounted at `/mcp`. Fixed, with JSON-RPC-over-HTTP tests added.
+
+**Two rules discovered while writing tests that the spec should absorb** (also
+noted in §Self-Review): control releases when the control socket closes, and
+read-only operations are not gated by arbitration.
+
 **Spec:** `docs/specs/2026-07-23-saidkick-2-agent-native-browser-design.md`. Section references
 below (§N) point at it.
 
@@ -114,7 +152,7 @@ Any task whose implementation approach is *not* obvious from its tests carries t
   (function-scoped `Engine`, started and stopped), `ctx` (function-scoped `ManagedContext`),
   `tab` (function-scoped `ManagedTab` on `index.html`).
 
-- [ ] **Step 1: Update dependencies and markers**
+- [x] **Step 1: Update dependencies and markers**
 
 ```bash
 uv add 'playwright>=1.61' 'mcp>=1.28' 'jinja2>=3.1'
@@ -131,7 +169,7 @@ markers = [
 
 Run `uv sync --all-groups && uv run playwright install chromium`.
 
-- [ ] **Step 2: Write the fixture site**
+- [x] **Step 2: Write the fixture site**
 
 `tests/fixtures/site/index.html` — links to the other pages, an `<h1>Fixture Home</h1>`.
 
@@ -157,7 +195,7 @@ Run `uv sync --all-groups && uv run playwright install chromium`.
 `dialog.html` — a button that calls `confirm("proceed?")` and writes the result to `#result`.
 `frame.html` — an `<iframe src="form.html">`.
 
-- [ ] **Step 3: Write conftest.py**
+- [x] **Step 3: Write conftest.py**
 
 ```python
 import asyncio, functools, http.server, socket, threading
@@ -197,7 +235,7 @@ async def tab(ctx, fixture_url):
     return t
 ```
 
-- [ ] **Step 4: Delete the extension-era tests and assets**
+- [x] **Step 4: Delete the extension-era tests and assets**
 
 ```bash
 git rm -r tests/assets src/saidkick/extension
@@ -205,14 +243,14 @@ git rm tests/test_saidkick.py tests/test_saidkick_enhanced.py tests/test_saidkic
        tests/test_doctor.py tests/test_tabs.py tests/test_execute_args.py tests/test_error_taxonomy.py
 ```
 
-- [ ] **Step 5: Verify collection**
+- [x] **Step 5: Verify collection**
 
 Run: `uv run pytest -m "not browser" --collect-only -q`
 Expected: collects the remaining locator tests without import errors. (`test_locators.py`,
 `test_find.py` etc. still import `saidkick.server` and will be dealt with in Task 3 — if they
 error here, that is expected and they are deleted or ported there.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A && git commit -m "test: fixture site and engine fixtures; drop extension-era tests"
@@ -231,7 +269,7 @@ git add -A && git commit -m "test: fixture site and engine fixtures; drop extens
   the eleven subclasses named in §9. `http_detail(exc) -> dict` returning
   `{"error": code, "detail": str(exc), **exc.extra}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 import pytest
@@ -271,23 +309,23 @@ def test_extra_is_never_shared_between_instances():
     assert E.http_detail(b).get("candidates", []) == []
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `uv run pytest tests/test_errors.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'saidkick.errors'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `SaidkickError(Exception)` with `status = 500`, `code = "SaidkickError"`, and
 `__init__(self, detail: str = "", **extra)` storing `self.extra = dict(extra)` — a fresh dict per
 instance, which is what the third test pins down. Each subclass sets `status` and `code`.
 `code` is derived as `cls.__name__` via `__init_subclass__` so the two can never drift.
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `uv run pytest tests/test_errors.py -q` → 13 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/saidkick/errors.py tests/test_errors.py
@@ -313,7 +351,7 @@ git commit -m "feat(errors): closed error set with HTTP mapping"
     >1 primary or `exact`+`regex`, and `LocatorNotFound` when `required` and none given.
   - `resolve(page: playwright.async_api.Page, loc: Locator) -> playwright.async_api.Locator`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import pytest
@@ -378,11 +416,11 @@ async def test_nth_disambiguates(tab):
     assert (await el.text_content()) == "Country"
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `uv run pytest tests/test_locators.py -q -m "not browser"` → FAIL, module not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `resolve` maps each primary onto Playwright:
 
@@ -403,11 +441,11 @@ Leaf-most: Playwright's `get_by_text` already returns the innermost matching ele
 `test_by_text_returns_leafmost` test verifies rather than assumes. `pierce_shadow` is accepted and
 ignored (Playwright pierces open shadow roots by default); document it in the field description.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `uv run pytest tests/test_locators.py -q` (with `-m browser` too) → all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(locators): port 1.x locator vocabulary onto Playwright"
@@ -432,7 +470,7 @@ git add -A && git commit -m "feat(locators): port 1.x locator vocabulary onto Pl
   - `class ManagedTab`: `.id` (`"ctx_a1b2:3"`), `.page`, `.context`, `async navigate(url, wait)`.
 - Consumes: `saidkick.errors`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import pytest
@@ -490,11 +528,11 @@ async def test_close_context_closes_its_tabs(engine, fixture_url):
     assert engine.list_contexts() == []
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `uv run pytest tests/engine/test_lifecycle.py -q -m browser` → FAIL, no module.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `Engine.start()` does `self._pw = await async_playwright().start()` then
 `self._browser = await self._pw.chromium.launch(headless=self.headless)`. `open_context()` calls
@@ -507,11 +545,11 @@ are `"ctx_" + secrets.token_hex(2)`; tab ids are `f"{ctx.id}:{n}"` with `n` a pe
 
 `stop()` closes browser then playwright, and is idempotent.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `uv run pytest tests/engine/test_lifecycle.py -q -m browser` → 8 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(engine): Playwright-backed contexts, tabs and navigation"
@@ -529,7 +567,7 @@ git add -A && git commit -m "feat(engine): Playwright-backed contexts, tabs and 
 - Produces: `async snapshot(tab: ManagedTab, mode: str = "aria", within_css: str | None = None)
   -> str`. Modes `aria | text | html`. Unknown mode raises `ValueError`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import pytest
@@ -563,9 +601,9 @@ async def test_bad_mode_raises(tab):
         await snapshot(tab, mode="dom")
 ```
 
-- [ ] **Step 2: Run to verify failure.** Run: `uv run pytest tests/engine/test_snapshot.py -q -m browser`
+- [x] **Step 2: Run to verify failure.** Run: `uv run pytest tests/engine/test_snapshot.py -q -m browser`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 async def snapshot(tab, mode="aria", within_css=None):
@@ -581,9 +619,9 @@ async def snapshot(tab, mode="aria", within_css=None):
 
 `aria_snapshot()` returns a YAML-shaped string (verified §7). There is no `page.accessibility`.
 
-- [ ] **Step 4: Verify.** → 5 passed.
+- [x] **Step 4: Verify.** → 5 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(engine): aria/text/html snapshots"
@@ -605,7 +643,7 @@ git add -A && git commit -m "feat(engine): aria/text/html snapshots"
   `find(tab, loc) -> list[dict]`, `screenshot(tab, loc=None, full_page=False) -> bytes`.
 - Consumes: `saidkick.locators.resolve`, `saidkick.errors`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import pytest
@@ -665,9 +703,9 @@ async def test_screenshot_returns_png_bytes(tab):
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
 ```
 
-- [ ] **Step 2: Run to verify failure.**
+- [x] **Step 2: Run to verify failure.**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Every action funnels through one helper so ambiguity and not-found are handled identically:
 
@@ -693,9 +731,9 @@ async def _one(tab, loc, timeout_ms=5000):
 on non-form elements. `submit=True` appends `press("Enter")`. `highlight` injects a temporary
 outline via `evaluate` and removes it after `duration_ms` (`0` = persist).
 
-- [ ] **Step 4: Verify.** → 9 passed.
+- [x] **Step 4: Verify.** → 9 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(engine): click/type/select/find/screenshot actions"
@@ -715,7 +753,7 @@ git add -A && git commit -m "feat(engine): click/type/select/find/screenshot act
   `subscribe(ctx_id) -> AsyncIterator[dict]`. Events are `{seq, ts, ctx, kind, **data}`.
   Per-context ring buffer capped at 500.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import asyncio, pytest
@@ -761,10 +799,10 @@ async def test_wait_returns_empty_on_timeout():
     assert await EventBus().wait("ctx_a", 0, timeout_s=0.1) == []
 ```
 
-- [ ] **Step 2–4:** run (fail), implement with a global counter, `collections.deque(maxlen=500)`
+- [x] **Step 2–4:** run (fail), implement with a global counter, `collections.deque(maxlen=500)`
   per context, and an `asyncio.Event` per context woken on `emit`; run (pass).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(events): in-memory event bus with monotonic seq"
@@ -787,7 +825,7 @@ git add -A && git commit -m "feat(events): in-memory event bus with monotonic se
   A single exception handler maps `SaidkickError -> JSONResponse(status=exc.status,
   content=http_detail(exc))`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import pytest, pytest_asyncio
@@ -829,10 +867,10 @@ async def test_ambiguous_locator_is_400_with_candidates(client, fixture_url):
     assert r.json()["error"] == "LocatorAmbiguous" and len(r.json()["candidates"]) == 2
 ```
 
-- [ ] **Step 2–4:** run (fail), implement, run (pass). The exception handler is the only place
+- [x] **Step 2–4:** run (fail), implement, run (pass). The exception handler is the only place
   status codes appear — routes raise domain errors and never build HTTP responses themselves.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(api): REST surface over the engine"
@@ -866,7 +904,7 @@ app = FastAPI(lifespan=lifespan)
 app.mount("/mcp", mcp.streamable_http_app())
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import pytest
@@ -900,10 +938,10 @@ async def test_open_context_description_warns_about_attached(engine):
 The description tests are deliberate: §7 makes tool prose a reviewed artifact, and a test is the
 only thing that stops it from decaying into `"""Click an element."""`.
 
-- [ ] **Step 2–4:** run (fail), implement each tool as a thin wrapper over `actions`/`snapshot`
+- [x] **Step 2–4:** run (fail), implement each tool as a thin wrapper over `actions`/`snapshot`
   with an explicit `description=`, run (pass).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(mcp): VS1 tool surface with reviewed descriptions"
@@ -923,7 +961,7 @@ git add -A && git commit -m "feat(mcp): VS1 tool surface with reviewed descripti
   `async set_quality(quality, max_width)`. Frames pushed to viewers as
   `{"data": b64, "metadata": {...}}`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import asyncio, pytest
@@ -965,9 +1003,9 @@ async def test_stops_when_last_viewer_leaves(tab):
     assert pump.running is False
 ```
 
-- [ ] **Step 2: Run to verify failure.**
+- [x] **Step 2: Run to verify failure.**
 
-- [ ] **Step 3: Implement — the ack is the transport**
+- [x] **Step 3: Implement — the ack is the transport**
 
 ```python
 async def start(self, quality=60, max_width=1280):
@@ -995,9 +1033,9 @@ async def _ack(self, session_id):
         pass    # tab closed mid-stream
 ```
 
-- [ ] **Step 4: Verify.** → 3 passed.
+- [x] **Step 4: Verify.** → 3 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(screencast): CDP frame pump with mandatory ack"
@@ -1017,7 +1055,7 @@ git add -A && git commit -m "feat(screencast): CDP frame pump with mandatory ack
 - Produces: `WS /ws/view/{tid}` — server pushes `{type:"frame", data, metadata}`; client sends
   `{type:"quality", quality, max_width}`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import pytest
@@ -1045,13 +1083,13 @@ def test_view_socket_streams_frames(engine_sync, fixture_url):
 (`engine_sync` is a session-scoped sync-wrapper fixture added to `conftest.py` for `TestClient`,
 which drives its own event loop.)
 
-- [ ] **Step 2–4:** run (fail), implement, run (pass).
+- [x] **Step 2–4:** run (fail), implement, run (pass).
 
 The client renders frames with `createImageBitmap` + `drawImage` onto a `<canvas>` (spec §6: not
 WebGL). The canvas is sized from `metadata.deviceWidth/deviceHeight` so the coordinate transform
 needed by Task 16 is established here rather than retrofitted.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(cockpit): session list and live screencast view"
@@ -1073,7 +1111,7 @@ git add -A && git commit -m "feat(cockpit): session list and live screencast vie
   `SaidkickClient` gains `open_context/close_context/list_contexts/quick/snapshot`; `doctor`,
   `get_logs`, `set_mirror`, `get_mirror`, `execute` are removed.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 from typer.testing import CliRunner
@@ -1098,17 +1136,17 @@ def test_mirror_command_is_gone():
     assert runner.invoke(app, ["mirror", "--help"]).exit_code != 0
 ```
 
-- [ ] **Step 2–4:** run (fail), implement, run (pass). `quick` posts a context, then a tab, and
+- [x] **Step 2–4:** run (fail), implement, run (pass). `quick` posts a context, then a tab, and
   prints the tab id and nothing else so `TAB=$(saidkick quick URL)` works.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git rm src/saidkick/server.py
 git add -A && git commit -m "feat(cli)!: serve/quick/contexts; remove extension-era commands"
 ```
 
-- [ ] **Step 6: VS1 gate — full suite, then tag**
+- [x] **Step 6: VS1 gate — full suite, then tag**
 
 ```bash
 uv run ruff check src tests
@@ -1141,7 +1179,7 @@ into one command — a non-zero code in the middle of a chain is easy to miss.
 
 **No browser.** This whole task is a pure state machine and every test runs in `-m "not browser"`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import asyncio, pytest
@@ -1219,9 +1257,9 @@ async def test_request_carries_a_relayable_human_message():
     assert "http://localhost:6992" in out["cockpit_url"]
 ```
 
-- [ ] **Step 2: Run to verify they fail.** Run: `uv run pytest tests/test_control.py -q`
+- [x] **Step 2: Run to verify they fail.** Run: `uv run pytest tests/test_control.py -q`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `HumanRequest` is a dataclass holding `id`, `ctx`, `reason`, `opened_at`, `deadline_at`, and an
 `asyncio.Event` plus a `note` slot. `request_human` creates-or-rejoins, then does:
@@ -1241,9 +1279,9 @@ except asyncio.TimeoutError:
 `release(ctx, note)` sets `req.note` and fires `req.done`. Two waiters on one request both wake
 and both see the same `request_id`, which is what the rejoin test pins down.
 
-- [ ] **Step 4: Verify.** → 11 passed, no browser.
+- [x] **Step 4: Verify.** → 11 passed, no browser.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(control): arbitration state machine and human-request registry"
@@ -1264,7 +1302,7 @@ git add -A && git commit -m "feat(control): arbitration state machine and human-
   (`snapshot`, `find`, `screenshot`, `events`) are **not** gated — an agent must still be able to
   observe what the human is doing.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import pytest
@@ -1300,9 +1338,9 @@ async def test_action_resumes_after_release(tab, controller):
     await A.click(tab, Locator(css="#go"))
 ```
 
-- [ ] **Step 2–4:** run (fail), thread a `controller` reference onto `ManagedContext`, run (pass).
+- [x] **Step 2–4:** run (fail), thread a `controller` reference onto `ManagedContext`, run (pass).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(control): gate mutating actions on the controller"
@@ -1324,7 +1362,7 @@ git add -A && git commit -m "feat(control): gate mutating actions on the control
   - `async forward(tab, msg, metadata)` — calls `to_cdp` and sends over CDP, refusing unless the
     controller state is `human`.
 
-- [ ] **Step 1: Write the failing tests (pure, no browser)**
+- [x] **Step 1: Write the failing tests (pure, no browser)**
 
 ```python
 import pytest
@@ -1405,9 +1443,9 @@ the *agent* holds control is also a violation. Use `HumanHoldsControl` with a de
 human does not currently hold control, rather than inventing a twelfth error outside §9's closed
 set.
 
-- [ ] **Step 2–4:** run (fail), implement, run (pass).
+- [x] **Step 2–4:** run (fail), implement, run (pass).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(control): takeover input forwarding over CDP"
@@ -1424,7 +1462,7 @@ git add -A && git commit -m "feat(control): takeover input forwarding over CDP"
 **Interfaces:**
 - Produces: `async show(tab, reason: str)`, `async hide(tab)`. Idempotent both ways.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import pytest
@@ -1477,9 +1515,9 @@ async def test_hide_without_show_is_safe(tab):
     await overlay.hide(tab)
 ```
 
-- [ ] **Step 2: Run to verify failure.**
+- [x] **Step 2: Run to verify failure.**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 One host element, a closed shadow root, and the two ARIA attributes that make Playwright's
 `aria_snapshot()` skip the subtree entirely:
@@ -1499,9 +1537,9 @@ Original `document.title` and the favicon `href` are stashed on `window.__saidki
 restores them exactly — which is what `test_title_and_favicon_restored_on_hide` checks. Also call
 `Page.bringToFront` via CDP in `show`, guarded so it is a no-op in headless.
 
-- [ ] **Step 4: Verify.** → 6 passed.
+- [x] **Step 4: Verify.** → 6 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(control): agent-invisible attention overlay"
@@ -1521,7 +1559,7 @@ git add -A && git commit -m "feat(control): agent-invisible attention overlay"
   `async run_dashboard(engine, controller, refresh_hz=4)` driving `rich.live.Live`.
   Pure `render` is what gets tested; the `Live` loop is not.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 from rich.console import Console
@@ -1557,10 +1595,10 @@ def test_cockpit_url_shown_for_pending_request(fake_engine, controller):
 `fake_engine` is a tiny stub in `conftest.py` exposing `list_contexts()` — the dashboard must not
 need a real browser to render, which is why `render` takes data rather than reaching for it.
 
-- [ ] **Step 2–4:** run (fail), implement, run (pass). Pending requests render in a panel above
+- [x] **Step 2–4:** run (fail), implement, run (pass). Pending requests render in a panel above
   the context table, with reason, elapsed, remaining, and the cockpit URL.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(cli): live terminal dashboard for saidkick serve"
@@ -1580,7 +1618,7 @@ git add -A && git commit -m "feat(cli): live terminal dashboard for saidkick ser
   `notify.py`, called fire-and-forget when a request opens; config key `notify.webhook_url`
   (default `None`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import pytest
@@ -1624,10 +1662,10 @@ async def test_webhook_payload_is_unbranded(monkeypatch):
     assert set(seen) == {"context", "reason", "url", "deadline"}
 ```
 
-- [ ] **Step 2–4:** run (fail), implement, run (pass). Webhook failures are swallowed and logged
+- [x] **Step 2–4:** run (fail), implement, run (pass). Webhook failures are swallowed and logged
   — a dead webhook must never break a rescue.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(mcp): request_human with relay obligations and generic webhook"
@@ -1646,7 +1684,7 @@ git add -A && git commit -m "feat(mcp): request_human with relay obligations and
 - Produces: `WS /ws/control/{tid}` accepting `{type:"take"}`, `{type:"release", note}`,
   and the input messages from Task 15. `GET /requests` lists pending requests for the UI.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 import pytest
@@ -1685,10 +1723,10 @@ control socket closes.** Without it, a browser tab closed mid-takeover strands t
 `human` forever and the agent never recovers. Add this to §5 as a spec amendment when the task
 lands.
 
-- [ ] **Step 2–4:** run (fail), implement, run (pass). The JS raises quality to 95/native on take
+- [x] **Step 2–4:** run (fail), implement, run (pass). The JS raises quality to 95/native on take
   and drops back to 60/1280 on release (§6 adaptive table).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(cockpit): takeover UI with release-on-disconnect"
@@ -1702,7 +1740,7 @@ git add -A && git commit -m "feat(cockpit): takeover UI with release-on-disconne
 - Modify: `README.md`, `SKILL.md`, `CHANGELOG.md`
 - Create: `tests/test_rescue_e2e.py`
 
-- [ ] **Step 1: Write the end-to-end test that is the whole point**
+- [x] **Step 1: Write the end-to-end test that is the whole point**
 
 ```python
 import asyncio, pytest
@@ -1739,7 +1777,7 @@ async def test_agent_asks_for_help_and_is_rescued(engine, controller, fixture_ur
     assert await asyncio.wait_for(task, timeout=5) == "submitted:123456"
 ```
 
-- [ ] **Step 2: Run the full gate, each as its own step**
+- [x] **Step 2: Run the full gate, each as its own step**
 
 ```bash
 uv run ruff check src tests
@@ -1749,7 +1787,7 @@ uv run pytest -m browser -q
 
 Check each exit code separately. Never `cmd | tail` inside a chain — a pipe masks the real code.
 
-- [ ] **Step 3: Rewrite README.md and SKILL.md**
+- [x] **Step 3: Rewrite README.md and SKILL.md**
 
 README: new architecture diagram (daemon owns Chromium; no extension), quickstart
 (`saidkick serve` → `saidkick quick URL`), the cockpit, the human-in-the-loop story, and a
@@ -1757,9 +1795,9 @@ README: new architecture diagram (daemon owns Chromium; no extension), quickstar
 `doctor`) and the `br-XXXX` → `ctx_XXXX` change. SKILL.md: rewrite for the MCP surface, leading
 with `snapshot(mode="aria")` and the obligation to relay `request_human` reasons.
 
-- [ ] **Step 4: CHANGELOG entry for 2.0.0** with a prominent BREAKING section.
+- [x] **Step 4: CHANGELOG entry for 2.0.0** with a prominent BREAKING section.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "docs: rewrite README and SKILL for the 2.0 architecture"
