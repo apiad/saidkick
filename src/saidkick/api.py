@@ -98,6 +98,7 @@ def create_app(
     app.state.engine = engine
     app.state.controller = controller
     app.state.events = events
+    app.state.pins = pins
 
     if mcp is not None:
         app.mount("/mcp", mcp.streamable_http_app())
@@ -288,6 +289,25 @@ def create_app(
                     if pump.running:
                         await pump.set_quality(OBSERVE_QUALITY, OBSERVE_MAX_WIDTH)
                     await ws.send_json({"state": controller.state(cid)})
+                elif kind == "pin":
+                    # Placing a pin does NOT require holding control: you point
+                    # while watching, and the agent uses the pin without a
+                    # takeover.
+                    if "w" in msg and "h" in msg:
+                        pin = await pins.mint_rect(
+                            tab, msg["x"], msg["y"], msg["w"], msg["h"], label=msg.get("label")
+                        )
+                    else:
+                        pin = await pins.mint_point(tab, msg["x"], msg["y"], label=msg.get("label"))
+                    # Highlight it so the operator sees the echo in the stream
+                    # and can confirm they pinned the right thing.
+                    try:
+                        await A.highlight(tab, Locator(css=f'[data-saidkick-pin="{pin.id}"]'),
+                                          duration_ms=1500)
+                    except E.SaidkickError:
+                        pass
+                    events.emit(cid, "pin_created", handle=pin.id, tab=tid)
+                    await ws.send_json({"pin": pin.info()})
                 else:
                     meta = msg.pop("metadata", {}) or {}
                     await forward(tab, msg, meta)

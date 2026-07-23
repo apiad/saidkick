@@ -62,6 +62,23 @@ def test_view_socket_streams_frames(live):
         assert "deviceWidth" in msg["metadata"]
 
 
+def test_pin_placed_over_the_control_socket_without_taking_control(live):
+    """Pointing at something must not require a takeover.
+
+    A rect over the top-left region encloses form content; the exact element
+    does not matter here — that a pin is created without control does.
+    """
+    client, controller, cid, tid = live
+    with client.websocket_connect(f"/ws/control/{tid}") as ws:
+        ws.send_json({"type": "pin", "x": 0, "y": 0, "w": 400, "h": 300, "label": "the form"})
+        reply = ws.receive_json()
+    assert reply["pin"]["handle"].startswith("el_")
+    assert reply["pin"]["label"] == "the form"
+    assert reply["pin"]["descriptor"]["tag"]
+    assert controller.state(cid) == "agent"  # never took control
+    assert len(client.app.state.pins.list(tid)) == 1
+
+
 def test_input_before_take_is_refused(live):
     """Forwarding input while the agent holds control is a violation."""
     client, controller, cid, tid = live

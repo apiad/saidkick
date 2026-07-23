@@ -18,10 +18,13 @@
     <button id="release" disabled>Release</button>
     <input id="paste-text" placeholder="paste text (e.g. a 2FA code)" disabled>
     <button id="paste" disabled>Paste</button>
+    <button id="pin-mode">📍 Pin</button>
+    <input id="pin-label" placeholder="optional label for the next pin">
     <span id="state" class="badge badge-{{ ctx.controller }}">{{ ctx.controller }}</span>
   </div>
   <canvas id="screen" tabindex="0"></canvas>
-  <p class="meta" id="hint">Watching. Click “Take over” to drive.</p>
+  <p class="meta" id="hint">Watching. Click “Take over” to drive, or “Pin” to point the agent at something.</p>
+  <ul class="pins" id="pin-list"></ul>
 </section>
 
 {% endblock %}

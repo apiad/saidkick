@@ -19,11 +19,16 @@
   const pasteText = document.getElementById("paste-text");
   const stateEl = document.getElementById("state");
   const hint = document.getElementById("hint");
+  const pinModeBtn = document.getElementById("pin-mode");
+  const pinLabel = document.getElementById("pin-label");
+  const pinList = document.getElementById("pin-list");
 
   let viewSocket = null;
   let controlSocket = null;
   let lastMetadata = {};
   let holding = false;
+  let pinning = false;
+  let dragStart = null;
 
   const wsUrl = (path) =>
     (location.protocol === "https:" ? "wss://" : "ws://") + location.host + path;
@@ -67,8 +72,28 @@
     controlSocket.onmessage = (event) => {
       const msg = JSON.parse(event.data);
       if (msg.state) setHolding(msg.state === "human");
+      if (msg.pin) addPinToList(msg.pin);
     };
     controlSocket.onclose = () => setHolding(false);
+  }
+
+  function addPinToList(pin) {
+    const li = document.createElement("li");
+    const d = pin.descriptor || {};
+    li.textContent =
+      "📍 " + pin.handle + " — " + (pin.label || d.text || d.tag || "element");
+    pinList.appendChild(li);
+  }
+
+  function setPinning(next) {
+    pinning = next;
+    pinModeBtn.classList.toggle("active", next);
+    canvas.style.cursor = next ? "crosshair" : "";
+    hint.textContent = next
+      ? "Pin mode: click an element, or drag a box around one, to point the agent at it."
+      : holding
+      ? "You are driving."
+      : "Watching. Click “Take over” to drive, or “Pin” to point the agent at something.";
   }
 
   function send(msg) {
@@ -85,18 +110,60 @@
     };
   }
 
+  // Viewport (device) coordinates, which is what pin minting hit-tests against.
+  function viewportPoint(event) {
+    const rect = canvas.getBoundingClientRect();
+    const dw = lastMetadata.deviceWidth || canvas.width;
+    const dh = lastMetadata.deviceHeight || canvas.height;
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * dw,
+      y: ((event.clientY - rect.top) / rect.height) * dh,
+    };
+  }
+
+  function placePin(msg) {
+    if (!controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
+    const label = pinLabel.value.trim() || null;
+    controlSocket.send(JSON.stringify(Object.assign({ type: "pin", label }, msg)));
+    pinLabel.value = "";
+  }
+
   const modifiersOf = (e) =>
     ["alt", "ctrl", "meta", "shift"].filter(
       (m) => e[m === "ctrl" ? "ctrlKey" : m === "meta" ? "metaKey" : m + "Key"]
     );
 
-  canvas.addEventListener("mousemove", (e) => send({ type: "mousemove", ...point(e) }));
-  canvas.addEventListener("mousedown", (e) =>
-    send({ type: "mousedown", button: "left", clickCount: 1, ...point(e) })
-  );
-  canvas.addEventListener("mouseup", (e) =>
-    send({ type: "mouseup", button: "left", clickCount: 1, ...point(e) })
-  );
+  canvas.addEventListener("mousemove", (e) => {
+    if (pinning) return;
+    send({ type: "mousemove", ...point(e) });
+  });
+  canvas.addEventListener("mousedown", (e) => {
+    if (pinning) {
+      dragStart = viewportPoint(e);
+      return;
+    }
+    send({ type: "mousedown", button: "left", clickCount: 1, ...point(e) });
+  });
+  canvas.addEventListener("mouseup", (e) => {
+    if (pinning) {
+      const end = viewportPoint(e);
+      const dx = Math.abs(end.x - dragStart.x);
+      const dy = Math.abs(end.y - dragStart.y);
+      if (dx > 5 || dy > 5) {
+        placePin({
+          x: Math.min(dragStart.x, end.x),
+          y: Math.min(dragStart.y, end.y),
+          w: dx,
+          h: dy,
+        });
+      } else {
+        placePin({ x: end.x, y: end.y });
+      }
+      dragStart = null;
+      return;
+    }
+    send({ type: "mouseup", button: "left", clickCount: 1, ...point(e) });
+  });
   canvas.addEventListener("wheel", (e) => {
     if (!holding) return;
     e.preventDefault();
@@ -124,6 +191,8 @@
     send({ type: "paste", text: pasteText.value });
     pasteText.value = "";
   });
+
+  pinModeBtn.addEventListener("click", () => setPinning(!pinning));
 
   picker.addEventListener("change", () => connect(picker.value));
   if (picker.value) connect(picker.value);

@@ -78,3 +78,7 @@ button:disabled, input:disabled { opacity: 0.45; }
   display: block;
 }
 #screen:focus { outline: 2px solid var(--warn); }
+
+#pin-mode.active { border-color: var(--accent); color: var(--accent); }
+.pins { list-style: none; padding: 0; margin-top: 12px; }
+.pins li { font-size: 13px; color: var(--muted); padding: 3px 0; font-family: ui-monospace, monospace; }
