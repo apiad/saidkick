@@ -113,6 +113,16 @@ class EngineCrashed(SaidkickError):
     status = 502
 
 
+class TooManyContexts(SaidkickError):
+    """The context cap is reached.
+
+    Distinct from every other error because the agent's recovery is specific:
+    close a context it is finished with, then retry.
+    """
+
+    status = 429
+
+
 def http_detail(exc: SaidkickError) -> dict[str, Any]:
     """Serialise an error into the JSON body the API returns."""
     return {"error": exc.code, "detail": exc.detail, **exc.extra}

@@ -11,6 +11,7 @@ engine itself never consults it.
 """
 
 import secrets
+import time
 from typing import TYPE_CHECKING, Any
 
 from playwright.async_api import (
@@ -27,6 +28,7 @@ from . import errors as E
 from .profiles import ProfileStore
 
 if TYPE_CHECKING:  # pragma: no cover
+    from .config import Settings
     from .control import Controller
 
 DEFAULT_VIEWPORT = {"width": 1280, "height": 800}
@@ -42,6 +44,7 @@ class ManagedTab:
         self.context = context
 
     async def navigate(self, url: str, wait: str = "load", timeout_ms: int = 15000) -> dict:
+        self.context.touch()
         if wait not in NAV_WAITS:
             raise ValueError(f"wait must be one of {NAV_WAITS}, got {wait!r}")
         try:
@@ -76,6 +79,15 @@ class ManagedContext:
         self._tabs: dict[str, ManagedTab] = {}
         self._cdp: dict[str, CDPSession] = {}
         self._next_tab = 1
+        self.last_activity = time.monotonic()
+
+    def touch(self) -> None:
+        """Mark the context as used, so the reaper leaves it alone."""
+        self.last_activity = time.monotonic()
+
+    @property
+    def idle_s(self) -> float:
+        return time.monotonic() - self.last_activity
 
     def adopt_existing_pages(self) -> None:
         """Register pages the context was born with (a persistent context opens
@@ -90,6 +102,7 @@ class ManagedContext:
         return self.engine.controller
 
     async def open_tab(self, url: str | None = None, wait: str = "load") -> ManagedTab:
+        self.touch()
         page = await self.pw_context.new_page()
         # Counter is never rewound, so a closed tab's id stays permanently
         # invalid instead of silently rebinding to a different page.
@@ -156,10 +169,14 @@ class Engine:
         headless: bool = True,
         controller: "Controller | None" = None,
         store: "ProfileStore | None" = None,
+        settings: "Settings | None" = None,
     ):
         self.headless = headless
         self.controller = controller
         self.store = store if store is not None else ProfileStore()
+        # Settings are optional: the library path constructs an Engine with none.
+        self.settings = settings
+        self._crashed = False
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._contexts: dict[str, ManagedContext] = {}
@@ -171,11 +188,52 @@ class Engine:
     def is_running(self) -> bool:
         return self._browser is not None
 
+    @property
+    def crashed(self) -> bool:
+        return self._crashed
+
+    def _on_disconnected(self, _browser=None) -> None:
+        """Chromium died. Mark it so the next open_context restarts rather than
+        handing out contexts on a dead browser."""
+        self._crashed = True
+
+    def preflight(self) -> None:
+        """Fail at startup, not at first use, if the browser is not installed.
+
+        Without this the daemon binds happily and the first open_context dies
+        with a Playwright stack trace that does not name the fix.
+        """
+        from playwright._impl._driver import compute_driver_executable  # noqa: PLC0415
+
+        try:
+            compute_driver_executable()
+        except Exception as exc:  # noqa: BLE001
+            raise E.EngineCrashed(
+                "Playwright driver is unavailable. Run: uv run playwright install chromium"
+            ) from exc
+
+    async def _restart(self) -> None:
+        """Bring Chromium back after a crash. Live contexts are gone regardless."""
+        self._contexts.clear()
+        self._attached.clear()
+        try:
+            if self._browser is not None:
+                await self._browser.close()
+        except PWError:
+            pass
+        if self._pw is None:  # pragma: no cover - start() guarantees this
+            raise E.EngineCrashed("engine is not started")
+        self._browser = await self._pw.chromium.launch(headless=self.headless)
+        self._browser.on("disconnected", self._on_disconnected)
+        self._crashed = False
+
     async def start(self) -> None:
         if self._pw is not None:
             return
         self._pw = await async_playwright().start()
         self._browser = await self._pw.chromium.launch(headless=self.headless)
+        self._crashed = False
+        self._browser.on("disconnected", self._on_disconnected)
 
     async def stop(self) -> None:
         for ctx in list(self._contexts.values()):
@@ -206,6 +264,15 @@ class Engine:
     ) -> ManagedContext:
         if self._pw is None:
             raise E.EngineCrashed("engine is not started")
+        if self._crashed:
+            # Chromium died under us; bring it back rather than handing out
+            # contexts on a dead browser.
+            await self._restart()
+        cap = self.settings.max_contexts if self.settings else None
+        if cap is not None and len(self._contexts) >= cap:
+            raise E.TooManyContexts(
+                f"context cap reached ({cap}); close a context you are finished with"
+            )
         viewport = viewport or DEFAULT_VIEWPORT
         ctx_id = self._new_ctx_id()
 

@@ -176,7 +176,7 @@ class Controller:
         try:
             await asyncio.wait_for(req.done.wait(), timeout=wait_for)
             return self._result(req, "resolved")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if req.remaining() <= 0:
                 # Deadline elapsed. Close the request but leave the control
                 # state and the browser untouched: reaping a half-finished

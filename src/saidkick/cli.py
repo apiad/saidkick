@@ -6,8 +6,8 @@ request reaches a person. Everything else is a thin wrapper over the REST API.
 """
 
 import asyncio
+import os
 import sys
-from typing import Optional
 
 import httpx
 import typer
@@ -15,14 +15,43 @@ import uvicorn
 from rich.console import Console
 
 from saidkick.client import SaidkickClient
+from saidkick.config import home as config_home
 
 app = typer.Typer(help="saidkick — a browser for agents, supervised by humans.", no_args_is_help=True)
 console = Console()
 err_console = Console(stderr=True)
 
 
+LOOPBACK = ("127.0.0.1", "localhost", "::1", "")
+
+
+def _cli_token() -> str | None:
+    """The token the CLI presents: env first, then the daemon's token file."""
+    env = os.environ.get("SAIDKICK_TOKEN")
+    if env:
+        return env
+    path = config_home() / "token"
+    return path.read_text().strip() if path.is_file() else None
+
+
 def _client() -> SaidkickClient:
-    return SaidkickClient()
+    return SaidkickClient(token=_cli_token())
+
+
+def _guard_bind(host: str, require_auth: bool) -> None:
+    """Refuse to publish an unauthenticated browser to the network.
+
+    The daemon drives a browser holding real logged-in profiles; reachable and
+    unauthenticated, that is a credential-exfiltration surface.
+    """
+    if require_auth or host in LOOPBACK:
+        return
+    err_console.print(
+        f"[red]refusing to bind {host} with authentication disabled.[/red]\n"
+        "A non-loopback bind exposes a browser holding your real logins.\n"
+        "Drop --no-auth, or bind 127.0.0.1."
+    )
+    raise typer.Exit(1)
 
 
 def handle_client_error(exc: Exception) -> None:
@@ -41,14 +70,14 @@ def handle_client_error(exc: Exception) -> None:
 
 
 def _locator(
-    css: Optional[str] = None,
-    xpath: Optional[str] = None,
-    by_text: Optional[str] = None,
-    by_label: Optional[str] = None,
-    by_placeholder: Optional[str] = None,
-    by_role: Optional[str] = None,
-    within_css: Optional[str] = None,
-    nth: Optional[int] = None,
+    css: str | None = None,
+    xpath: str | None = None,
+    by_text: str | None = None,
+    by_label: str | None = None,
+    by_placeholder: str | None = None,
+    by_role: str | None = None,
+    within_css: str | None = None,
+    nth: int | None = None,
     exact: bool = False,
     regex: bool = False,
     wait_ms: int = 0,
@@ -89,29 +118,53 @@ def serve(
     port: int = typer.Option(6992, "--port"),
     headless: bool = typer.Option(True, "--headless/--headful"),
     quiet: bool = typer.Option(False, "--quiet", help="Plain logs instead of the dashboard."),
+    no_auth: bool = typer.Option(False, "--no-auth", help="Disable token auth (loopback only)."),
+    max_contexts: int | None = typer.Option(None, "--max-contexts"),
+    idle_ttl: float | None = typer.Option(None, "--idle-ttl", help="Seconds; 0 disables."),
+    runlog: bool = typer.Option(False, "--runlog", help="Persist a run log to beaver."),
 ):
     """Run the daemon: browser engine, REST, MCP at /mcp, and the cockpit."""
     from saidkick.api import create_app
+    from saidkick.config import Settings
     from saidkick.control import Controller
     from saidkick.dashboard import run_dashboard
     from saidkick.engine import Engine
     from saidkick.events import EventBus
     from saidkick.mcp_server import build_mcp
     from saidkick.pins import PinRegistry
+    from saidkick.reaper import run_reaper
+
+    _guard_bind(host, require_auth=not no_auth)
+
+    settings = Settings.from_env(
+        require_auth=not no_auth if no_auth else None,
+        max_contexts=max_contexts,
+        idle_ttl_s=idle_ttl,
+        runlog=runlog or None,
+    )
+    if no_auth:
+        settings.require_auth = False
 
     controller = Controller(cockpit_base=f"http://{host}:{port}")
-    engine = Engine(headless=headless, controller=controller)
+    engine = Engine(headless=headless, controller=controller, settings=settings)
     events = EventBus()
     pins = PinRegistry()
     mcp = build_mcp(engine, controller, events, pins)
-    api = create_app(engine, controller, events, mcp=mcp, pins=pins)
+    api = create_app(engine, controller, events, mcp=mcp, pins=pins, settings=settings)
 
     async def main():
+        engine.preflight()
         await engine.start()
         config = uvicorn.Config(api, host=host, port=port, log_level="warning" if not quiet else "info")
         server = uvicorn.Server(config)
+        token = api.state.token
         console.print(f"[green]saidkick[/green] on http://{host}:{port}  ·  cockpit /  ·  MCP /mcp")
+        if token:
+            console.print(f"cockpit: http://{host}:{port}/?token={token}")
+        else:
+            console.print("[yellow]authentication disabled[/yellow] (loopback only)")
         tasks = [asyncio.create_task(server.serve())]
+        tasks.append(asyncio.create_task(run_reaper(engine, settings, events)))
         if not quiet:
             tasks.append(asyncio.create_task(run_dashboard(engine, controller)))
         try:
@@ -158,6 +211,17 @@ def quick(url: str):
         print(_client().quick(url))
     except Exception as exc:
         handle_client_error(exc)
+
+
+@app.command()
+def token():
+    """Print the daemon's auth token (from SAIDKICK_TOKEN or the token file)."""
+    found = _cli_token()
+    if found:
+        print(found)
+    else:
+        err_console.print("[yellow]no token found[/yellow] — the daemon generates one on first run")
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -225,7 +289,7 @@ def navigate(url: str, tab: str = TAB, wait: str = typer.Option("load", "--wait"
 def snapshot(
     tab: str = TAB,
     mode: str = typer.Option("aria", "--mode", help="aria | text | html"),
-    within_css: Optional[str] = WITHIN,
+    within_css: str | None = WITHIN,
 ):
     """Read the page. 'aria' is compact and maps onto locators."""
     try:
@@ -236,10 +300,10 @@ def snapshot(
 
 @app.command()
 def find(
-    tab: str = TAB, css: Optional[str] = CSS, xpath: Optional[str] = XPATH,
-    by_text: Optional[str] = BY_TEXT, by_label: Optional[str] = BY_LABEL,
-    by_placeholder: Optional[str] = BY_PLACEHOLDER, by_role: Optional[str] = BY_ROLE,
-    within_css: Optional[str] = WITHIN, nth: Optional[int] = NTH,
+    tab: str = TAB, css: str | None = CSS, xpath: str | None = XPATH,
+    by_text: str | None = BY_TEXT, by_label: str | None = BY_LABEL,
+    by_placeholder: str | None = BY_PLACEHOLDER, by_role: str | None = BY_ROLE,
+    within_css: str | None = WITHIN, nth: int | None = NTH,
     exact: bool = EXACT, regex: bool = REGEX, wait_ms: int = WAIT_MS,
 ):
     """Describe matching elements without acting on them."""
@@ -254,10 +318,10 @@ def find(
 
 @app.command()
 def click(
-    tab: str = TAB, css: Optional[str] = CSS, xpath: Optional[str] = XPATH,
-    by_text: Optional[str] = BY_TEXT, by_label: Optional[str] = BY_LABEL,
-    by_placeholder: Optional[str] = BY_PLACEHOLDER, by_role: Optional[str] = BY_ROLE,
-    within_css: Optional[str] = WITHIN, nth: Optional[int] = NTH,
+    tab: str = TAB, css: str | None = CSS, xpath: str | None = XPATH,
+    by_text: str | None = BY_TEXT, by_label: str | None = BY_LABEL,
+    by_placeholder: str | None = BY_PLACEHOLDER, by_role: str | None = BY_ROLE,
+    within_css: str | None = WITHIN, nth: int | None = NTH,
     exact: bool = EXACT, regex: bool = REGEX, wait_ms: int = WAIT_MS,
 ):
     """Click an element."""
@@ -272,10 +336,10 @@ def click(
 @app.command("type")
 def type_cmd(
     text: str, tab: str = TAB, submit: bool = typer.Option(False, "--submit"),
-    css: Optional[str] = CSS, xpath: Optional[str] = XPATH,
-    by_text: Optional[str] = BY_TEXT, by_label: Optional[str] = BY_LABEL,
-    by_placeholder: Optional[str] = BY_PLACEHOLDER, by_role: Optional[str] = BY_ROLE,
-    within_css: Optional[str] = WITHIN, nth: Optional[int] = NTH,
+    css: str | None = CSS, xpath: str | None = XPATH,
+    by_text: str | None = BY_TEXT, by_label: str | None = BY_LABEL,
+    by_placeholder: str | None = BY_PLACEHOLDER, by_role: str | None = BY_ROLE,
+    within_css: str | None = WITHIN, nth: int | None = NTH,
     exact: bool = EXACT, regex: bool = REGEX, wait_ms: int = WAIT_MS,
 ):
     """Type into a field, including rich-text editors."""
@@ -289,9 +353,9 @@ def type_cmd(
 
 @app.command()
 def select(
-    value: str, tab: str = TAB, css: Optional[str] = CSS, xpath: Optional[str] = XPATH,
-    by_label: Optional[str] = BY_LABEL, within_css: Optional[str] = WITHIN,
-    nth: Optional[int] = NTH, wait_ms: int = WAIT_MS,
+    value: str, tab: str = TAB, css: str | None = CSS, xpath: str | None = XPATH,
+    by_label: str | None = BY_LABEL, within_css: str | None = WITHIN,
+    nth: int | None = NTH, wait_ms: int = WAIT_MS,
 ):
     """Choose an <option>."""
     try:
@@ -305,8 +369,8 @@ def select(
 def press(
     key: str, tab: str = TAB,
     modifier: list[str] = typer.Option([], "--mod"),
-    css: Optional[str] = CSS, by_label: Optional[str] = BY_LABEL,
-    by_text: Optional[str] = BY_TEXT, wait_ms: int = WAIT_MS,
+    css: str | None = CSS, by_label: str | None = BY_LABEL,
+    by_text: str | None = BY_TEXT, wait_ms: int = WAIT_MS,
 ):
     """Dispatch a real keyboard event."""
     try:
@@ -318,8 +382,8 @@ def press(
 
 @app.command()
 def scroll(
-    tab: str = TAB, css: Optional[str] = CSS, by_text: Optional[str] = BY_TEXT,
-    by_label: Optional[str] = BY_LABEL, wait_ms: int = WAIT_MS,
+    tab: str = TAB, css: str | None = CSS, by_text: str | None = BY_TEXT,
+    by_label: str | None = BY_LABEL, wait_ms: int = WAIT_MS,
 ):
     """Scroll an element into view."""
     try:
@@ -333,8 +397,8 @@ def scroll(
 def highlight(
     tab: str = TAB, color: str = typer.Option("#ef4444", "--color"),
     duration_ms: int = typer.Option(2000, "--duration-ms"),
-    css: Optional[str] = CSS, by_text: Optional[str] = BY_TEXT,
-    by_label: Optional[str] = BY_LABEL, wait_ms: int = WAIT_MS,
+    css: str | None = CSS, by_text: str | None = BY_TEXT,
+    by_label: str | None = BY_LABEL, wait_ms: int = WAIT_MS,
 ):
     """Ring an element so a human can see what you mean."""
     try:
@@ -347,7 +411,7 @@ def highlight(
 @app.command()
 def screenshot(
     tab: str = TAB,
-    output: Optional[str] = typer.Option(None, "--output"),
+    output: str | None = typer.Option(None, "--output"),
     full_page: bool = typer.Option(False, "--full-page"),
 ):
     """Capture a PNG. Writes to --output, or raw bytes to stdout."""

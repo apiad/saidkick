@@ -87,7 +87,7 @@ async def test_request_carries_a_relayable_human_message():
     c = Controller(cockpit_base="http://localhost:6992")
     out = await c.request_human("ctx_a", "enter the 2FA code", deadline_s=0.1, poll_s=0.05)
     assert "enter the 2FA code" in out["human_message"]
-    assert "http://localhost:6992/session/ctx_a" == out["cockpit_url"]
+    assert out["cockpit_url"] == "http://localhost:6992/session/ctx_a"
 
 
 async def test_webhook_is_off_by_default(monkeypatch):

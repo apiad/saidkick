@@ -32,10 +32,10 @@ async def _descriptions(engine, controller):
 
 async def test_all_tools_registered(engine, controller):
     names = set(await _descriptions(engine, controller))
-    assert VS1_TOOLS <= names
-    assert VS2_TOOLS <= names
-    assert VS4_TOOLS <= names
-    assert VS3_TOOLS <= names
+    assert names >= VS1_TOOLS
+    assert names >= VS2_TOOLS
+    assert names >= VS4_TOOLS
+    assert names >= VS3_TOOLS
 
 
 async def test_open_context_documents_modes_and_bootstrapping(engine, controller):

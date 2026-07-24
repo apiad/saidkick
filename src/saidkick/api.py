@@ -20,6 +20,9 @@ from fastapi.templating import Jinja2Templates
 from . import actions as A
 from . import errors as E
 from . import overlay
+from .auth import install as install_auth
+from .auth import resolve_token, ws_authorized
+from .config import Settings
 from .control import Controller
 from .engine import Engine
 from .events import EventBus
@@ -66,11 +69,14 @@ def create_app(
     events: EventBus | None = None,
     mcp: Any = None,
     pins: PinRegistry | None = None,
+    settings: Settings | None = None,
 ) -> FastAPI:
     controller = controller or engine.controller or Controller()
     engine.controller = controller
     events = events or EventBus()
     pins = pins if pins is not None else PinRegistry()
+    settings = settings if settings is not None else Settings(require_auth=False)
+    token = resolve_token(settings)
     pumps: dict[str, ScreencastPump] = {}
 
     @asynccontextmanager
@@ -99,6 +105,9 @@ def create_app(
     app.state.controller = controller
     app.state.events = events
     app.state.pins = pins
+    app.state.settings = settings
+    app.state.token = token
+    install_auth(app, token)
 
     if mcp is not None:
         app.mount("/mcp", mcp.streamable_http_app())
@@ -264,6 +273,9 @@ def create_app(
 
     @app.websocket("/ws/view/{tid}")
     async def ws_view(ws: WebSocket, tid: str):
+        if not ws_authorized(ws, token):
+            await ws.close(code=4401)
+            return
         await ws.accept()
         tab = engine.find_tab(tid)
         pump = _pump(tab)
@@ -290,6 +302,9 @@ def create_app(
 
     @app.websocket("/ws/control/{tid}")
     async def ws_control(ws: WebSocket, tid: str):
+        if not ws_authorized(ws, token):
+            await ws.close(code=4401)
+            return
         await ws.accept()
         tab = engine.find_tab(tid)
         cid = tab.context.id

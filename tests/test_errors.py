@@ -17,6 +17,7 @@ from saidkick import errors as E
         (E.HumanTimeout, 504, "HumanTimeout"),
         (E.DialogBlocked, 409, "DialogBlocked"),
         (E.EngineCrashed, 502, "EngineCrashed"),
+        (E.TooManyContexts, 429, "TooManyContexts"),
     ],
 )
 def test_error_has_status_and_code(cls, status, code):

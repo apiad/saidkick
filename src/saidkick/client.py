@@ -31,10 +31,14 @@ LOCATOR_KEYS = (
 
 
 class SaidkickClient:
-    def __init__(self, base_url: str | None = None, timeout: float = 30.0):
+    def __init__(
+        self, base_url: str | None = None, timeout: float = 30.0, token: str | None = None
+    ):
         resolved = base_url or os.environ.get(BASE_URL_ENV) or DEFAULT_BASE_URL
         self.base_url = resolved.rstrip("/")
-        self._client = httpx.Client(base_url=self.base_url, timeout=timeout)
+        self.token = token or os.environ.get("SAIDKICK_TOKEN")
+        headers = {"X-Saidkick-Token": self.token} if self.token else {}
+        self._client = httpx.Client(base_url=self.base_url, timeout=timeout, headers=headers)
 
     # -- plumbing ---------------------------------------------------------
 

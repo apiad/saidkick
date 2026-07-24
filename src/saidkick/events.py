@@ -44,7 +44,7 @@ class EventBus:
             return pending
         try:
             await asyncio.wait_for(self._wakeups[ctx_id].wait(), timeout=timeout_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return []
         return self.since(ctx_id, seq)
 

@@ -26,6 +26,7 @@ MODES = ("aria", "text", "html")
 async def snapshot(
     tab: "ManagedTab", mode: str = "aria", within_css: str | None = None
 ) -> str:
+    tab.context.touch()
     root = tab.page.locator(within_css) if within_css else tab.page.locator("body")
     if mode == "aria":
         return await root.aria_snapshot()

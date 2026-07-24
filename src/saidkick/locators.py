@@ -9,9 +9,9 @@ auto-waiting and leaf-most text matching for free.
 import re
 from typing import Any
 
-from pydantic import BaseModel
 from playwright.async_api import Locator as PWLocator
 from playwright.async_api import Page
+from pydantic import BaseModel
 
 from . import errors as E
 

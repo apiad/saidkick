@@ -38,7 +38,12 @@ e => ({
 
 
 def _gate(tab: "ManagedTab") -> None:
-    """Refuse a mutating action while a human holds the wheel."""
+    """Refuse a mutating action while a human holds the wheel.
+
+    Also stamps activity: a context being acted on is not idle, and the reaper
+    must not close it out from under a working agent.
+    """
+    tab.context.touch()
     controller = tab.context.controller
     if controller is not None:
         controller.assert_agent_may_act(tab.context.id)
@@ -53,6 +58,8 @@ async def _one(
     tab: "ManagedTab", loc: Locator, timeout_ms: int = DEFAULT_TIMEOUT_MS
 ) -> PWLocator:
     """Resolve to exactly one element, or raise from the closed error set."""
+    # Read-only paths reach here without _gate, so stamp activity here too.
+    tab.context.touch()
     found = resolve(tab.page, loc)
     timeout = loc.wait_ms or timeout_ms
 
