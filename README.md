@@ -64,13 +64,62 @@ Three layers, and the distinction between the middle two is what makes end-to-en
 
 | | |
 |---|---|
-| **Profile** | A named on-disk storage partition. *(VS3 — not in this release.)* |
+| **Profile** | A named on-disk storage partition that survives restarts. See [Profiles](#-profiles). |
 | **Context** | An isolated cookie jar and storage partition. Two contexts cannot see each other's logins. |
 | **Tab** | A page inside a context, addressed `ctx_a1b2:3`. Tabs in one context share session state. |
 
 Contexts default to **ephemeral**: they start empty and are discarded on close — reproducible, and
 incapable of damaging real logged-in state. Name a **profile** and they persist. See
 [Profiles](#-profiles).
+
+## 🔐 Security
+
+The daemon drives a browser holding your real logged-in profiles. Reachable and
+unauthenticated, that is a credential-exfiltration surface — so **auth is on by default**.
+
+- A token is generated on first run at `~/.saidkick/token` (mode `0600`), or set `SAIDKICK_TOKEN`.
+  `saidkick token` prints it; the CLI and `SaidkickClient` pick it up automatically.
+- Present it as `Authorization: Bearer …`, `X-Saidkick-Token: …`, `?token=…`, or a cookie. The
+  query form exists because the cockpit is a browser page and WebSockets cannot set headers.
+- `/health` is the only open route, so liveness probes work.
+- **`serve` refuses a non-loopback bind with `--no-auth`.** Use `--no-auth` on loopback only.
+
+What this is not: multi-user auth, per-agent authorization, or a permission model. Every holder
+of the token can do everything. Treat it like an SSH key.
+
+**Resource limits.** `--max-contexts` (default 20) caps live contexts — over it, agents get
+`TooManyContexts` (429) telling them to close one. `--idle-ttl` (default 1800s) reaps idle
+contexts, but never one a human controls or one with a pending request: somebody is mid-rescue.
+
+**The run log records what agents typed.** `--runlog` persists actions to beaver; typed text is
+redacted to a length and hash by default (`SAIDKICK_REDACT=0` disables, deliberately).
+
+## 🧰 Use it as a library
+
+saidkick is a daemon you can run and a library you can build on. The engine has no auth, no HTTP
+and no beaver — none of the hardening is a requirement for embedding:
+
+```python
+import asyncio
+from saidkick.engine import Engine
+from saidkick.locators import Locator
+from saidkick.snapshot import snapshot
+from saidkick import actions as A
+
+async def main():
+    engine = Engine()                      # no daemon, no token, no config
+    await engine.start()
+    ctx = await engine.open_context()      # or profile="github" to reuse a login
+    tab = await ctx.open_tab("https://example.com")
+    print(await snapshot(tab))             # the ARIA outline an agent would read
+    await A.click(tab, Locator(by_role="link", by_text="More information"))
+    await engine.stop()
+
+asyncio.run(main())
+```
+
+That makes it a reasonable base for end-to-end tests and for computer-use / browser-use products
+that want the browser primitives without adopting the whole daemon.
 
 ## 💾 Profiles
 
@@ -146,6 +195,7 @@ Saidkick ships no integration with any chat, mail, or push provider.
 |---|---|
 | Contexts | `list_contexts`, `open_context`, `close_context` |
 | Profiles | `list_profiles`, `save_profile` |
+| Debugging | `console`, `network`, `dialogs`, `start_trace`, `stop_trace` |
 | Tabs | `list_tabs`, `open_tab`, `close_tab`, `navigate` |
 | Reading | `snapshot_page`, `screenshot`, `find` |
 | Acting | `click`, `type`, `press`, `select`, `highlight` (each also accepts `handle=`) |
@@ -282,9 +332,9 @@ uv run saidkick serve --headful  # watch it work
 
 Shipped: isolated contexts and tabs, ARIA snapshots, the full locator vocabulary, actions, MCP,
 REST, the cockpit with live view and takeover, control arbitration, `request_human`, the terminal
-dashboard, the attention overlay, **pins**, and **persistent profiles**.
+dashboard, the attention overlay, **pins**, **persistent profiles**, token auth, resource limits, dialog handling, console/network capture, a redacted run log, and tracing.
 
-Next: a run log and trace replay (VS5).
+The browser is feature-complete for its design. Next up is a scripting layer: agents discovering and storing reusable saidkick scripts that replay with little or no agent.
 
 ## 📜 License
 

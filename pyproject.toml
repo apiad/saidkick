@@ -1,6 +1,6 @@
 [project]
 name = "saidkick"
-version = "2.2.0"
+version = "2.3.0"
 description = "A browser for agents, supervised by humans."
 authors = [
     { name = "Alejandro", email = "apiad@users.noreply.github.com" }

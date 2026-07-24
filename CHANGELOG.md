@@ -4,6 +4,46 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-07-24
+
+### Added
+
+- **Token authentication**, on by default, on every surface except `/health`.
+  Accepted as `Authorization: Bearer`, `X-Saidkick-Token`, `?token=` or a
+  cookie; compared in constant time. `serve` refuses a non-loopback bind when
+  auth is disabled. `saidkick token` prints the current one.
+- **Resource limits**: `--max-contexts` (new `TooManyContexts`, 429) and an
+  idle reaper (`--idle-ttl`) that never reaps a context a human controls or one
+  with a pending human request.
+- **Console and network capture** per tab, with `console` / `network` on MCP and
+  REST. Uncaught page errors are captured too — they never reach `console`.
+- **Run log** (`--runlog`), beaver-backed, with every action's locator, outcome,
+  error and duration. Typed text is redacted to a length + hash by default.
+- **Tracing**: `start_trace` / `stop_trace` produce a Playwright trace zip.
+- `tests/test_library_usage.py` pins the embedding promise: `Engine` works with
+  no daemon, no auth, no settings, no controller and no beaver.
+
+### Fixed
+
+- **Dialogs were silently dismissed.** A click firing `confirm()` reported
+  success while the page took the cancel branch, with no signal anywhere. Every
+  dialog is now recorded and emitted; `dialog_policy` selects `auto_dismiss`
+  (default), `auto_accept` or `ask_human`, the last holding the dialog open and
+  raising `DialogBlocked` at the agent until a person answers.
+- **Profile saves are atomic** (temp + rename). An interrupted write left
+  truncated JSON and broke every future context seeded from that profile.
+- **Chromium crashes are detected and recovered**; `preflight` fails at startup
+  with the exact `playwright install chromium` command instead of at first use.
+- `RunLog` guards against writes after close: beaver *blocks* rather than
+  raising, which could hang a browser action during shutdown.
+
+### Notes
+
+- Ruff config is now pinned in `pyproject.toml`. The gate previously depended on
+  whichever version `uvx` resolved, so "all checks passed" did not mean the same
+  thing twice.
+
+
 ## [2.2.0] - 2026-07-23
 
 ### Added
