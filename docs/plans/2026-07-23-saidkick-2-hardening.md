@@ -15,6 +15,31 @@ daemon task; the run log is an optional sink the engine *emits to*, never depend
 **Tech Stack:** adds `beaver-db` 2.1 (verified: `db.log(name).log(data)` / `.range(limit=)` /
 `.count()`, entries carry `timestamp` + `data`, durable across reopen).
 
+
+**Status:** COMPLETE — 2026-07-24. All 8 tasks on `main`; gate green (ruff clean,
+157 non-browser + 154 browser). Released 2.3.0. Smoke-tested against a live
+hardened daemon: /health open + everything else 401, all four credential forms
+accepted, wrong token rejected; non-loopback bind with --no-auth exits 1; 4th
+context -> 429 TooManyContexts; a confirm() click showing CANCELLED now reports
+`action: dismissed` (auto_accept gives ACCEPTED); console/network captured a JS
+error and a failed fetch; the run log recorded locator/outcome/duration incl. a
+LocatorNotFound, with the typed password captured as {len:27, sha256} and the
+plaintext absent from every file on disk; the library path ran with no daemon,
+no auth, no controller and a disabled sink.
+
+**Deviations:**
+1. The ruff gate was never reproducible — `uvx ruff` resolved 0.16, which enables
+   rules earlier "all checks passed" runs never applied. Config is now pinned in
+   pyproject.toml; SIM105 is ignored with a stated reason.
+2. `RunLog` needed a closed-guard: beaver BLOCKS on a write to a closed handle
+   rather than raising, so try/except was insufficient and a log write during
+   shutdown could hang a browser action. Found by a test that hung for 300s.
+3. The `recorded` decorator binds the call signature instead of reading kwargs —
+   `type_text(tab, loc, "secret")` passes text positionally, so the original
+   kwargs-only version recorded nothing and made the redaction test vacuous.
+4. Trace state errors are `ValueError` -> 400 rather than a new domain error;
+   only `TooManyContexts` was added to the closed set, as planned.
+
 **Spec:** `docs/specs/2026-07-23-saidkick-2-agent-native-browser-design.md`. This slice replaces
 the spec's VS5 with a superset: VS5's observability is Tier 3 here, and Tiers 1–2 cover gaps the
 spec did not name.
@@ -68,7 +93,7 @@ Modified: `engine.py` (activity stamp, crash detection, capture hookup, emit to 
 - `/health` is the only unauthenticated route (liveness probes).
 - **Refuse to bind a non-loopback host with auth disabled** — `serve` exits with a clear error.
 
-- [ ] **Step 1: failing tests**
+- [x] **Step 1: failing tests**
 
 ```python
 import pytest
@@ -142,13 +167,13 @@ def test_token_comparison_is_constant_time():
     assert "compare_digest" in inspect.getsource(auth)
 ```
 
-- [ ] **Step 2:** run → fail. **Step 3:** implement. **Step 4:** run → pass.
-- [ ] **Step 5: WS auth + non-loopback guard.** WebSocket routes check `?token=`; on failure
+- [x] **Step 2:** run → fail. **Step 3:** implement. **Step 4:** run → pass.
+- [x] **Step 5: WS auth + non-loopback guard.** WebSocket routes check `?token=`; on failure
   `await ws.close(code=4401)` before accept. In `cli.serve`, if `host` is not a loopback address
   and auth is off, print an error and `raise typer.Exit(1)`. Test both.
-- [ ] **Step 6:** `SaidkickClient(token=...)` sends the bearer header; `_client()` in the CLI
+- [x] **Step 6:** `SaidkickClient(token=...)` sends the bearer header; `_client()` in the CLI
   reads `SAIDKICK_TOKEN`/token file. `saidkick token` prints the current one.
-- [ ] **Step 7:** commit `feat(auth)!: bearer-token auth on every surface`.
+- [x] **Step 7:** commit `feat(auth)!: bearer-token auth on every surface`.
 
 ---
 
@@ -172,7 +197,7 @@ signal anywhere. Even the auto modes must therefore **record and emit** every di
   cockpit (`POST /tabs/{tid}/dialog {"accept": bool, "text": str|None}`).
 - MCP: `dialogs(tab)` reads the record; `open_context` gains `dialog_policy`.
 
-- [ ] **Step 1: failing tests** (using the unused `dialog.html` fixture):
+- [x] **Step 1: failing tests** (using the unused `dialog.html` fixture):
 
 ```python
 import pytest
@@ -228,8 +253,8 @@ async def test_resolving_an_asked_dialog_unblocks(engine, fixture_url):
     await A.click(tab, Locator(css="#ask"))   # no raise now
 ```
 
-- [ ] **Step 2–4:** run/implement/run.
-- [ ] **Step 5:** commit `fix(dialogs): record and honour dialogs instead of silently dismissing`.
+- [x] **Step 2–4:** run/implement/run.
+- [x] **Step 5:** commit `fix(dialogs): record and honour dialogs instead of silently dismissing`.
 
 ---
 
@@ -249,11 +274,11 @@ Test `tests/test_reaper.py` (no browser) + a browser case.
   a human mid-rescue must not have the page yanked away.
 - `run_reaper(engine, settings, events)` — the periodic daemon task.
 
-- [ ] **Step 1: failing tests** — cap raises `TooManyContexts`; reaping closes an idle context;
+- [x] **Step 1: failing tests** — cap raises `TooManyContexts`; reaping closes an idle context;
   activity bumps prevent reaping; a human-held context is never reaped; a context with a pending
   request is never reaped; reaping emits an event.
-- [ ] **Step 2–4:** run/implement/run.
-- [ ] **Step 5:** commit `feat(engine): context cap and idle reaping`.
+- [x] **Step 2–4:** run/implement/run.
+- [x] **Step 5:** commit `feat(engine): context cap and idle reaping`.
 
 ---
 
@@ -271,12 +296,12 @@ Test `tests/test_reaper.py` (no browser) + a browser case.
 - `Engine.preflight()` — verifies the Chromium executable exists, raising `EngineCrashed` with
   the exact `uv run playwright install chromium` fix. Called by `serve` at startup, before bind.
 
-- [ ] **Step 1: failing tests** — a save interrupted by a simulated crash leaves the previous
+- [x] **Step 1: failing tests** — a save interrupted by a simulated crash leaves the previous
   state readable (write to a path, assert no `.tmp` remains and the file parses); killing the
   browser marks the engine crashed and the next `open_context` recovers; `preflight` on a bogus
   browser path raises with an actionable message.
-- [ ] **Step 2–4:** run/implement/run.
-- [ ] **Step 5:** commit `fix(engine,profiles): atomic saves, crash recovery, startup preflight`.
+- [x] **Step 2–4:** run/implement/run.
+- [x] **Step 5:** commit `fix(engine,profiles): atomic saves, crash recovery, startup preflight`.
 
 ---
 
@@ -295,10 +320,10 @@ Test `tests/engine/test_capture.py`.
   descriptions pointing agents at them for debugging a failing page.
 - Fixture additions: a page that logs an error and fetches a 404.
 
-- [ ] **Step 1: failing tests** — a console error is captured with its level; grep filters;
+- [x] **Step 1: failing tests** — a console error is captured with its level; grep filters;
   a failed request appears in `network` with `ok=False`; the ring is bounded.
-- [ ] **Step 2–4:** run/implement/run.
-- [ ] **Step 5:** commit `feat(capture): console and network capture`.
+- [x] **Step 2–4:** run/implement/run.
+- [x] **Step 5:** commit `feat(capture): console and network capture`.
 
 ---
 
@@ -319,12 +344,12 @@ Test `tests/engine/test_capture.py`.
   human requests + resolutions, dialogs, reaps.
 - `query(ctx=None, limit=100) -> list[dict]`; REST `GET /runlog`; CLI `saidkick runlog`.
 
-- [ ] **Step 1: failing tests** — a click is recorded with duration and ok; a failed action
+- [x] **Step 1: failing tests** — a click is recorded with duration and ok; a failed action
   records the error code; `type` text is redacted by default and the plaintext is absent from the
   file on disk; `redact=False` keeps it; a `None` path no-ops without beaver installed being
   required; records survive a reopen.
-- [ ] **Step 2–4:** run/implement/run.
-- [ ] **Step 5:** commit `feat(runlog): beaver-backed run log with redaction`.
+- [x] **Step 2–4:** run/implement/run.
+- [x] **Step 5:** commit `feat(runlog): beaver-backed run log with redaction`.
 
 ---
 
@@ -339,10 +364,10 @@ Test `tests/engine/test_tracing.py`.
 - REST `POST /contexts/{cid}/trace/start`, `POST /contexts/{cid}/trace/stop` (returns the path),
   `GET /traces/{name}` (download). MCP `start_trace` / `stop_trace`. CLI `saidkick trace`.
 
-- [ ] **Step 1: failing tests** — start→act→stop produces a non-empty `.zip`; stopping without
+- [x] **Step 1: failing tests** — start→act→stop produces a non-empty `.zip`; stopping without
   starting is a clean error; the file lands under `trace_dir`.
-- [ ] **Step 2–4:** run/implement/run.
-- [ ] **Step 5:** commit `feat(tracing): Playwright trace capture`.
+- [x] **Step 2–4:** run/implement/run.
+- [x] **Step 5:** commit `feat(tracing): Playwright trace capture`.
 
 ---
 
@@ -351,7 +376,7 @@ Test `tests/engine/test_tracing.py`.
 **Files:** `README.md`, `SKILL.md`, `CHANGELOG.md`, `pyproject.toml`; Test
 `tests/test_library_usage.py`.
 
-- [ ] **Step 1: the embedding test** — this is the one that protects the "library you can build
+- [x] **Step 1: the embedding test** — this is the one that protects the "library you can build
   on" promise:
 
 ```python
@@ -386,12 +411,12 @@ def test_engine_layer_has_no_auth_imports():
         assert "from .auth" not in src and "import auth" not in src, mod.__name__
 ```
 
-- [ ] **Step 2: full gate**, each its own step, checking each rc:
+- [x] **Step 2: full gate**, each its own step, checking each rc:
   `uvx ruff check src tests` · `uv run pytest -m "not browser" -q` · `uv run pytest -m browser -q`.
-- [ ] **Step 3:** README: a **Security** section (token, bind, what auth does and does not cover)
+- [x] **Step 3:** README: a **Security** section (token, bind, what auth does and does not cover)
   and a **Use as a library** section with the embedding example. SKILL.md: console/network for
   debugging, dialogs. CHANGELOG 2.3.0; bump version.
-- [ ] **Step 4:** commit `feat: hardening docs and 2.3.0`.
+- [x] **Step 4:** commit `feat: hardening docs and 2.3.0`.
 
 ---
 
