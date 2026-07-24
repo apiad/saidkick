@@ -143,6 +143,7 @@ def create_app(
             ctx = await engine.open_context(
                 profile=body.get("profile"),
                 mode=body.get("mode", "ephemeral"),
+                dialog_policy=body.get("dialog_policy", "auto_dismiss"),
                 viewport=body.get("viewport"),
             )
         except ValueError as exc:
@@ -237,6 +238,17 @@ def create_app(
     @app.get("/pins/{handle}")
     async def read_pin(handle: str, screenshot: bool = False):
         return pins.get(handle).info(include_screenshot=screenshot)
+
+    @app.get("/tabs/{tid}/dialogs")
+    async def list_dialogs(tid: str):
+        return engine.find_tab(tid).dialogs
+
+    @app.post("/tabs/{tid}/dialog")
+    async def answer_dialog(tid: str, body: dict = Body(...)):
+        tab = engine.find_tab(tid)
+        out = await tab.resolve_dialog(bool(body.get("accept")), body.get("text"))
+        events.emit(tab.context.id, "dialog_resolved", tab=tid, action=out["action"])
+        return out
 
     @app.post("/tabs/{tid}/pin")
     async def create_pin(tid: str, body: dict = Body(...)):

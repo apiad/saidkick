@@ -10,6 +10,7 @@ action layer can ask "may the agent act on this context right now?" — the
 engine itself never consults it.
 """
 
+import asyncio
 import secrets
 import time
 from typing import TYPE_CHECKING, Any
@@ -25,6 +26,7 @@ from playwright.async_api import (
 from playwright.async_api import Error as PWError
 
 from . import errors as E
+from .dialogs import install_dialog_handler
 from .profiles import ProfileStore
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -33,6 +35,8 @@ if TYPE_CHECKING:  # pragma: no cover
 
 DEFAULT_VIEWPORT = {"width": 1280, "height": 800}
 NAV_WAITS = ("load", "domcontentloaded", "networkidle", "commit")
+#: How many dialog records to keep per tab.
+DIALOG_HISTORY = 50
 
 
 class ManagedTab:
@@ -42,6 +46,8 @@ class ManagedTab:
         self.id = tab_id
         self.page = page
         self.context = context
+        self.dialogs: list[dict] = []
+        self._pending_dialog = None
 
     async def navigate(self, url: str, wait: str = "load", timeout_ms: int = 15000) -> dict:
         self.context.touch()
@@ -52,6 +58,19 @@ class ManagedTab:
         except PWError as exc:
             raise E.NavigationFailed(f"could not navigate to {url}: {exc.message}") from exc
         return self.info()
+
+    def record_dialog(self, record: dict) -> None:
+        self.dialogs.append(record)
+        del self.dialogs[:-DIALOG_HISTORY]
+
+    def schedule(self, coro) -> None:
+        """Run a coroutine from a sync Playwright event callback."""
+        asyncio.get_running_loop().create_task(coro)
+
+    async def resolve_dialog(self, accept: bool, text: str | None = None) -> dict:
+        from .dialogs import resolve_dialog as _resolve
+
+        return await _resolve(self, accept, text)
 
     def info(self) -> dict:
         return {"id": self.id, "url": self.page.url, "title": None}
@@ -70,12 +89,14 @@ class ManagedContext:
         engine: "Engine",
         profile: str | None = None,
         mode: str = "ephemeral",
+        dialog_policy: str = "auto_dismiss",
     ):
         self.id = ctx_id
         self.pw_context = pw_context
         self.engine = engine
         self.profile = profile
         self.mode = mode
+        self.dialog_policy = dialog_policy
         self._tabs: dict[str, ManagedTab] = {}
         self._cdp: dict[str, CDPSession] = {}
         self._next_tab = 1
@@ -95,7 +116,9 @@ class ManagedContext:
         for page in self.pw_context.pages:
             tab_id = f"{self.id}:{self._next_tab}"
             self._next_tab += 1
-            self._tabs[tab_id] = ManagedTab(tab_id, page, self)
+            tab = ManagedTab(tab_id, page, self)
+            install_dialog_handler(tab)
+            self._tabs[tab_id] = tab
 
     @property
     def controller(self):
@@ -109,6 +132,7 @@ class ManagedContext:
         tab_id = f"{self.id}:{self._next_tab}"
         self._next_tab += 1
         tab = ManagedTab(tab_id, page, self)
+        install_dialog_handler(tab)
         self._tabs[tab_id] = tab
         if url:
             await tab.navigate(url, wait=wait)
@@ -261,6 +285,7 @@ class Engine:
         profile: str | None = None,
         mode: str = "ephemeral",
         viewport: dict[str, int] | None = None,
+        dialog_policy: str = "auto_dismiss",
     ) -> ManagedContext:
         if self._pw is None:
             raise E.EngineCrashed("engine is not started")
@@ -290,7 +315,10 @@ class Engine:
                 headless=self.headless,
                 viewport=viewport,
             )
-            ctx = ManagedContext(ctx_id, pw_ctx, self, profile=profile, mode="attached")
+            ctx = ManagedContext(
+                ctx_id, pw_ctx, self, profile=profile, mode="attached",
+                dialog_policy=dialog_policy,
+            )
             # A persistent context opens with one blank page; adopt it so it is
             # tracked rather than leaked.
             ctx.adopt_existing_pages()
@@ -302,7 +330,10 @@ class Engine:
             if profile and self.store.state_file(profile).is_file():
                 seed = str(self.store.state_file(profile))
             pw_ctx = await self._browser.new_context(viewport=viewport, storage_state=seed)
-            ctx = ManagedContext(ctx_id, pw_ctx, self, profile=profile, mode="ephemeral")
+            ctx = ManagedContext(
+                ctx_id, pw_ctx, self, profile=profile, mode="ephemeral",
+                dialog_policy=dialog_policy,
+            )
         else:
             raise ValueError(f"unknown context mode: {mode!r} (expected ephemeral or attached)")
 

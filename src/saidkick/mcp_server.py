@@ -112,18 +112,23 @@ def build_mcp(
             "attached context per profile may be live at once (else ProfileLocked). Use it "
             "when you need to modify a real logged-in account; prefer ephemeral otherwise.\n\n"
             "To make a login durable: open ephemeral, hit the wall, request_human, let them "
-            "sign in, then call save_profile."
+            "sign in, then call save_profile.\n\n"
+            "dialog_policy decides what happens to alert/confirm/prompt: 'auto_dismiss' "
+            "(default) cancels them, 'auto_accept' confirms them, 'ask_human' holds each one "
+            "open for a person. Every dialog is recorded either way — see the dialogs tool."
         )
     )
     async def open_context(
         profile: str | None = None,
         mode: str = "ephemeral",
+        dialog_policy: str = "auto_dismiss",
         viewport_width: int = 1280,
         viewport_height: int = 800,
     ) -> dict:
         ctx = await engine.open_context(
             profile=profile,
             mode=mode,
+            dialog_policy=dialog_policy,
             viewport={"width": viewport_width, "height": viewport_height},
         )
         events.emit(ctx.id, "context_opened")
@@ -442,6 +447,21 @@ def build_mcp(
             "controller": controller.state(context),
             "pending_request": pending.info() if pending else None,
         }
+
+    @mcp.tool(
+        description=(
+            "List the native dialogs (alert/confirm/prompt) a tab has raised, newest last, "
+            "with what happened to each: 'dismissed', 'accepted', or 'pending'.\n\n"
+            "CHECK THIS WHEN AN ACTION SEEMED TO WORK BUT THE PAGE DID NOT CHANGE. By "
+            "default saidkick dismisses dialogs, so a click that triggers a confirm() takes "
+            "the CANCEL branch — the click reports success and the thing you wanted does not "
+            "happen. This tool is how you find out. If you need the other branch, open the "
+            "context with dialog_policy='auto_accept', or 'ask_human' to have a person decide "
+            "each one."
+        )
+    )
+    async def dialogs(tab: str) -> list[dict]:
+        return engine.find_tab(tab).dialogs
 
     # -- pins -------------------------------------------------------------
 

@@ -17,6 +17,7 @@ from playwright.async_api import Locator as PWLocator
 from playwright.async_api import TimeoutError as PWTimeout
 
 from . import errors as E
+from .dialogs import assert_no_pending_dialog
 from .locators import Locator, resolve
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -47,6 +48,9 @@ def _gate(tab: "ManagedTab") -> None:
     controller = tab.context.controller
     if controller is not None:
         controller.assert_agent_may_act(tab.context.id)
+    # A dialog held open under the ask_human policy blocks the page entirely;
+    # acting into it would hang rather than fail.
+    assert_no_pending_dialog(tab)
 
 
 async def _describe_all(found: PWLocator, limit: int = MAX_CANDIDATES) -> list[dict]:

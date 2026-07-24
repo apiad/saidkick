@@ -23,6 +23,21 @@ VS1_TOOLS = {
 VS2_TOOLS = {"request_human", "control_state"}
 VS4_TOOLS = {"list_pins", "read_pin"}
 VS3_TOOLS = {"list_profiles", "save_profile"}
+HARDENING_TOOLS = {"dialogs"}
+
+
+async def test_dialogs_tool_warns_about_the_silent_cancel(engine, controller):
+    """The dialogs tool exists to make a silent wrong answer discoverable."""
+    d = (await _descriptions(engine, controller))["dialogs"]
+    assert "dialogs" in set(await _descriptions(engine, controller))
+    lower = d.lower()
+    assert "cancel" in lower and "dismiss" in lower
+    assert "auto_accept" in d
+
+
+async def test_open_context_documents_dialog_policy(engine, controller):
+    d = (await _descriptions(engine, controller))["open_context"]
+    assert "dialog_policy" in d and "ask_human" in d
 
 
 async def _descriptions(engine, controller):
@@ -36,6 +51,7 @@ async def test_all_tools_registered(engine, controller):
     assert names >= VS2_TOOLS
     assert names >= VS4_TOOLS
     assert names >= VS3_TOOLS
+    assert names >= HARDENING_TOOLS
 
 
 async def test_open_context_documents_modes_and_bootstrapping(engine, controller):
