@@ -23,7 +23,7 @@ VS1_TOOLS = {
 VS2_TOOLS = {"request_human", "control_state"}
 VS4_TOOLS = {"list_pins", "read_pin"}
 VS3_TOOLS = {"list_profiles", "save_profile"}
-HARDENING_TOOLS = {"dialogs"}
+HARDENING_TOOLS = {"dialogs", "console", "network"}
 
 
 async def test_dialogs_tool_warns_about_the_silent_cancel(engine, controller):
@@ -33,6 +33,13 @@ async def test_dialogs_tool_warns_about_the_silent_cancel(engine, controller):
     lower = d.lower()
     assert "cancel" in lower and "dismiss" in lower
     assert "auto_accept" in d
+
+
+async def test_debugging_tools_point_the_agent_at_them(engine, controller):
+    """console/network exist so an agent stops guessing at a broken page."""
+    d = await _descriptions(engine, controller)
+    assert "pageerror" in d["console"]
+    assert "failed_only" in d["network"]
 
 
 async def test_open_context_documents_dialog_policy(engine, controller):

@@ -54,8 +54,18 @@ class ProfileStore:
         return self.path(name).is_dir()
 
     def save_state(self, name: str, state: dict) -> None:
+        """Write the seed atomically.
+
+        A plain write that is interrupted leaves a truncated JSON file, and
+        every future context seeded from this profile then fails to open. The
+        temp-then-rename keeps the previous state readable until the new one is
+        complete.
+        """
         self.path(name).mkdir(parents=True, exist_ok=True)
-        self.state_file(name).write_text(json.dumps(state))
+        target = self.state_file(name)
+        tmp = target.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state))
+        os.replace(tmp, target)  # atomic on POSIX
 
     def load_state(self, name: str) -> dict | None:
         f = self.state_file(name)

@@ -63,3 +63,26 @@ def test_delete_removes_the_profile(store):
 
 def test_userdata_path_is_under_the_profile(store):
     assert store.userdata("github").parent == store.path("github")
+
+
+def test_save_leaves_no_temp_file_behind(store):
+    store.save_state("github", {"cookies": [], "origins": []})
+    assert list(store.path("github").glob("*.tmp")) == []
+
+
+def test_a_failed_save_leaves_the_previous_state_readable(store, monkeypatch):
+    """An interrupted write must not corrupt a working profile."""
+    good = {"cookies": [{"name": "sid", "value": "keepme"}], "origins": []}
+    store.save_state("github", good)
+
+    import json as _json
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(_json, "dumps", boom)
+    with pytest.raises(OSError):
+        store.save_state("github", {"cookies": [], "origins": []})
+
+    monkeypatch.undo()
+    assert store.load_state("github") == good

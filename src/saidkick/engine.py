@@ -26,6 +26,7 @@ from playwright.async_api import (
 from playwright.async_api import Error as PWError
 
 from . import errors as E
+from .capture import TabCapture
 from .dialogs import install_dialog_handler
 from .profiles import ProfileStore
 
@@ -48,6 +49,8 @@ class ManagedTab:
         self.context = context
         self.dialogs: list[dict] = []
         self._pending_dialog = None
+        self.capture = TabCapture()
+        self.capture.install(self)
 
     async def navigate(self, url: str, wait: str = "load", timeout_ms: int = 15000) -> dict:
         self.context.touch()

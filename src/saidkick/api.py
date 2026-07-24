@@ -239,6 +239,14 @@ def create_app(
     async def read_pin(handle: str, screenshot: bool = False):
         return pins.get(handle).info(include_screenshot=screenshot)
 
+    @app.get("/tabs/{tid}/console")
+    async def get_console(tid: str, grep: str | None = None, level: str | None = None):
+        return engine.find_tab(tid).capture.read_console(grep=grep, level=level)
+
+    @app.get("/tabs/{tid}/network")
+    async def get_network(tid: str, failed_only: bool = False, grep: str | None = None):
+        return engine.find_tab(tid).capture.read_network(failed_only=failed_only, grep=grep)
+
     @app.get("/tabs/{tid}/dialogs")
     async def list_dialogs(tid: str):
         return engine.find_tab(tid).dialogs

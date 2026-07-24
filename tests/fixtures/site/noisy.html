@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head><title>Noisy</title></head>
+<body>
+<h1>Noisy</h1>
+<div id="done"></div>
+<script>
+  console.log("hello from the page");
+  console.warn("a warning");
+  console.error("boom: something broke");
+  fetch("/definitely-missing.json")
+    .then(function (r) { document.getElementById("done").textContent = "fetched:" + r.status; })
+    .catch(function () { document.getElementById("done").textContent = "fetch failed"; });
+</script>
+</body>
+</html>

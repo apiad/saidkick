@@ -450,6 +450,32 @@ def build_mcp(
 
     @mcp.tool(
         description=(
+            "Read the browser console for a tab: log/warn/error messages and uncaught "
+            "exceptions (level 'pageerror'). Filter with grep (substring, case-insensitive) "
+            "or level.\n\n"
+            "REACH FOR THIS WHEN A PAGE IS NOT BEHAVING. A JavaScript error usually explains "
+            "a form that will not submit or content that never appears, and it is far more "
+            "direct than screenshotting and guessing."
+        )
+    )
+    async def console(tab: str, grep: str | None = None, level: str | None = None) -> list[dict]:
+        return engine.find_tab(tab).capture.read_console(grep=grep, level=level)
+
+    @mcp.tool(
+        description=(
+            "Read the network activity for a tab: method, url, status and whether each "
+            "request succeeded. Pass failed_only=true for just the failures.\n\n"
+            "Use it when a page looks broken or empty: a 404 or 500 on a background request "
+            "is usually the real cause, and it will not show up on screen."
+        )
+    )
+    async def network(
+        tab: str, failed_only: bool = False, grep: str | None = None
+    ) -> list[dict]:
+        return engine.find_tab(tab).capture.read_network(failed_only=failed_only, grep=grep)
+
+    @mcp.tool(
+        description=(
             "List the native dialogs (alert/confirm/prompt) a tab has raised, newest last, "
             "with what happened to each: 'dismissed', 'accepted', or 'pending'.\n\n"
             "CHECK THIS WHEN AN ACTION SEEMED TO WORK BUT THE PAGE DID NOT CHANGE. By "
