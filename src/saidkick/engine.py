@@ -29,6 +29,7 @@ from . import errors as E
 from .capture import TabCapture
 from .dialogs import install_dialog_handler
 from .profiles import ProfileStore
+from .runlog import NULL_RUNLOG, RunLog
 
 if TYPE_CHECKING:  # pragma: no cover
     from .config import Settings
@@ -197,12 +198,16 @@ class Engine:
         controller: "Controller | None" = None,
         store: "ProfileStore | None" = None,
         settings: "Settings | None" = None,
+        runlog: "RunLog | None" = None,
     ):
         self.headless = headless
         self.controller = controller
         self.store = store if store is not None else ProfileStore()
         # Settings are optional: the library path constructs an Engine with none.
         self.settings = settings
+        # Optional durable sink. NULL_RUNLOG is a no-op, so the library path
+        # never requires beaver.
+        self.runlog = runlog if runlog is not None else NULL_RUNLOG
         self._crashed = False
         self._pw: Playwright | None = None
         self._browser: Browser | None = None

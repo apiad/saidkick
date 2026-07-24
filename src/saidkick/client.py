@@ -71,6 +71,12 @@ class SaidkickClient:
             body["viewport"] = viewport
         return self._json(self._client.post("/contexts", json=body))
 
+    def runlog(self, context: str | None = None, limit: int = 100) -> list[dict]:
+        params: dict[str, Any] = {"limit": limit}
+        if context:
+            params["context"] = context
+        return self._json(self._client.get("/runlog", params=params))
+
     def list_profiles(self) -> list[dict]:
         return self._json(self._client.get("/profiles"))
 

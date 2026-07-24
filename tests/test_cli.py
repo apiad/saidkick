@@ -46,6 +46,20 @@ def test_save_profile_command_exists():
     assert runner.invoke(app, ["save-profile", "--help"]).exit_code == 0
 
 
+def test_runlog_command_exists():
+    assert runner.invoke(app, ["runlog", "--help"]).exit_code == 0
+
+
+def test_token_command_exists():
+    assert runner.invoke(app, ["token", "--help"]).exit_code == 0
+
+
+def test_serve_exposes_the_hardening_flags():
+    out = runner.invoke(app, ["serve", "--help"]).output
+    for flag in ("--no-auth", "--max-contexts", "--idle-ttl", "--runlog"):
+        assert flag in out, flag
+
+
 def test_ported_verbs_still_exist():
     for verb in ("click", "type", "press", "select", "find", "snapshot",
                  "screenshot", "navigate", "open", "close", "scroll", "highlight"):

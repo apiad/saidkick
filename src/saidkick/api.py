@@ -37,6 +37,7 @@ from .screencast import (
     ScreencastPump,
 )
 from .snapshot import snapshot
+from .tracing import TraceManager
 
 log = logging.getLogger("saidkick.api")
 
@@ -77,6 +78,7 @@ def create_app(
     pins = pins if pins is not None else PinRegistry()
     settings = settings if settings is not None else Settings(require_auth=False)
     token = resolve_token(settings)
+    traces = TraceManager(settings.trace_dir)
     pumps: dict[str, ScreencastPump] = {}
 
     @asynccontextmanager
@@ -107,6 +109,7 @@ def create_app(
     app.state.pins = pins
     app.state.settings = settings
     app.state.token = token
+    app.state.traces = traces
     install_auth(app, token)
 
     if mcp is not None:
@@ -165,6 +168,30 @@ def create_app(
             return JSONResponse(status_code=400, content={"error": "BadName", "detail": str(exc)})
         events.emit(cid, "profile_saved", profile=body["name"])
         return out
+
+    @app.post("/contexts/{cid}/trace/start")
+    async def trace_start(cid: str):
+        try:
+            return await traces.start(engine.get_context(cid))
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=400, content={"error": "BadTraceState", "detail": str(exc)}
+            )
+
+    @app.post("/contexts/{cid}/trace/stop")
+    async def trace_stop(cid: str):
+        try:
+            out = await traces.stop(engine.get_context(cid))
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=400, content={"error": "BadTraceState", "detail": str(exc)}
+            )
+        events.emit(cid, "trace_saved", path=out["path"])
+        return out
+
+    @app.get("/runlog")
+    async def get_runlog(context: str | None = None, limit: int = 100):
+        return engine.runlog.query(ctx=context, limit=limit)
 
     @app.get("/profiles")
     async def list_profiles():

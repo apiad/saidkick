@@ -16,12 +16,14 @@ import base64
 from mcp.server.fastmcp import FastMCP
 
 from . import actions as A
+from .config import home as default_home
 from .control import Controller
 from .engine import Engine
 from .events import EventBus
 from .locators import Locator
 from .pins import PinRegistry
 from .snapshot import snapshot
+from .tracing import TraceManager
 
 LOCATOR_DOC = """
 Locators target elements the way a user sees them. Set exactly ONE of:
@@ -65,11 +67,13 @@ def build_mcp(
     controller: Controller | None = None,
     events: EventBus | None = None,
     pins: PinRegistry | None = None,
+    traces: "TraceManager | None" = None,
 ) -> FastMCP:
     controller = controller or engine.controller or Controller()
     engine.controller = controller
     events = events or EventBus()
     pins = pins if pins is not None else PinRegistry()
+    traces = traces if traces is not None else TraceManager(default_home() / "traces")
     mcp = FastMCP("saidkick")
     # streamable_http_app() serves at settings.streamable_http_path, which
     # defaults to "/mcp". Since the app is mounted at "/mcp", leaving the
@@ -488,6 +492,28 @@ def build_mcp(
     )
     async def dialogs(tab: str) -> list[dict]:
         return engine.find_tab(tab).dialogs
+
+    @mcp.tool(
+        description=(
+            "Start recording a Playwright trace for a context: DOM snapshots, screenshots, "
+            "network and console for every step. Call stop_trace to write it out.\n\n"
+            "Use it when you are about to attempt something that has failed before, or when "
+            "a human asked you to show your work — the resulting file can be replayed "
+            "step-by-step in Playwright's trace viewer."
+        )
+    )
+    async def start_trace(context: str) -> dict:
+        return await traces.start(engine.get_context(context))
+
+    @mcp.tool(
+        description=(
+            "Stop the trace on a context and write it to disk, returning the path and the "
+            "command to view it. Traces are large, so stop one when the interesting part is "
+            "over rather than leaving it running."
+        )
+    )
+    async def stop_trace(context: str) -> dict:
+        return await traces.stop(engine.get_context(context))
 
     # -- pins -------------------------------------------------------------
 

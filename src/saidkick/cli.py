@@ -133,6 +133,8 @@ def serve(
     from saidkick.mcp_server import build_mcp
     from saidkick.pins import PinRegistry
     from saidkick.reaper import run_reaper
+    from saidkick.runlog import RunLog
+    from saidkick.tracing import TraceManager
 
     _guard_bind(host, require_auth=not no_auth)
 
@@ -146,10 +148,14 @@ def serve(
         settings.require_auth = False
 
     controller = Controller(cockpit_base=f"http://{host}:{port}")
-    engine = Engine(headless=headless, controller=controller, settings=settings)
+    sink = RunLog(settings.runlog_path if settings.runlog else None, redact=settings.redact)
+    engine = Engine(
+        headless=headless, controller=controller, settings=settings, runlog=sink
+    )
     events = EventBus()
     pins = PinRegistry()
-    mcp = build_mcp(engine, controller, events, pins)
+    traces = TraceManager(settings.trace_dir)
+    mcp = build_mcp(engine, controller, events, pins, traces)
     api = create_app(engine, controller, events, mcp=mcp, pins=pins, settings=settings)
 
     async def main():
@@ -163,6 +169,8 @@ def serve(
             console.print(f"cockpit: http://{host}:{port}/?token={token}")
         else:
             console.print("[yellow]authentication disabled[/yellow] (loopback only)")
+        if sink.enabled:
+            console.print(f"run log: {settings.runlog_path}")
         tasks = [asyncio.create_task(server.serve())]
         tasks.append(asyncio.create_task(run_reaper(engine, settings, events)))
         if not quiet:
@@ -209,6 +217,26 @@ def quick(url: str):
     """Open an ephemeral context and a tab in one call; print the tab id."""
     try:
         print(_client().quick(url))
+    except Exception as exc:
+        handle_client_error(exc)
+
+
+@app.command()
+def runlog(
+    context: str | None = typer.Option(None, "--context"),
+    limit: int = typer.Option(50, "--limit"),
+):
+    """Show recent recorded actions."""
+    try:
+        rows = _client().runlog(context=context, limit=limit)
+        if not rows:
+            console.print("[dim]no records (start the daemon with --runlog)[/dim]")
+        for r in rows:
+            mark = "ok" if r.get("ok") else (r.get("error") or "error")
+            console.print(
+                f"{r.get('ctx', '-'):<10} {r['kind']:<10} {mark:<18} "
+                f"{r.get('ms', '-')}ms  {r.get('locator') or ''}"
+            )
     except Exception as exc:
         handle_client_error(exc)
 
