@@ -176,7 +176,10 @@ class ManagedContext:
             except PWError:
                 pass  # page already gone
         await tab.page.close()
-        del self._tabs[tab_id]
+        # pop, not del: closing the page fires page.on("close"), whose _forget
+        # handler may already have dropped this id. `del` raced it and 500'd
+        # every explicit close of an adopted tab.
+        self._tabs.pop(tab_id, None)
 
     def list_tabs(self) -> list[dict]:
         return [t.info() for t in self._tabs.values()]

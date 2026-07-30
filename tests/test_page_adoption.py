@@ -82,6 +82,28 @@ async def test_adopted_tab_captures_traffic_from_adoption_onwards(ctx, fixture_u
         "the adopted tab records no network traffic even after adoption"
 
 
+async def test_close_tab_on_an_adopted_tab_does_not_raise(ctx, fixture_url):
+    """Regression: adoption's page.on("close") handler races close_tab.
+
+    close_tab used `del self._tabs[tab_id]`, but closing the page fires the
+    close event first, and _forget had already dropped the id — so every
+    explicit close of a page-opened tab raised KeyError and 500'd over REST.
+    The adoption tests missed it because they close via page.close(), not
+    through the API's own path.
+    """
+    tab = await ctx.open_tab(f"{fixture_url}/popup.html")
+    before = {t["id"] for t in ctx.list_tabs()}
+    await tab.page.click("#blank")
+    new_id = await _new_tab_id(ctx, before)
+
+    await ctx.close_tab(new_id)          # must not raise
+    assert new_id not in {t["id"] for t in ctx.list_tabs()}
+
+    # And a tab saidkick opened itself still closes cleanly.
+    await ctx.close_tab(tab.id)
+    assert tab.id not in {t["id"] for t in ctx.list_tabs()}
+
+
 async def test_a_closed_popup_leaves_the_registry(ctx, fixture_url):
     """list_tabs must stay truthful: a tab the browser closed is not a tab."""
     tab = await ctx.open_tab(f"{fixture_url}/popup.html")

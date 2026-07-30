@@ -22,6 +22,10 @@ All notable changes to this project are documented here. Format: Keep a Changelo
   popup's own first navigation may land before capture attaches —
   `context.on("page")` is the earliest hook there is — so assert that response
   on the opener, not the popup.
+- **`close_tab` raced its own close event.** Once adoption registered a
+  `page.on("close")` handler, closing a tab through the API removed it twice —
+  the handler dropped the id, then `del self._tabs[id]` raised KeyError and
+  500'd. Every explicit close of a page-opened tab hit it.
 
 ## [2.3.0] - 2026-07-24
 
