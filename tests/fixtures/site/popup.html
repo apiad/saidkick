@@ -1,0 +1,10 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>popup opener</title></head>
+<body>
+  <h1>Popup opener</h1>
+  <!-- Two ways a SITE opens a tab saidkick did not open. Both used to be
+       invisible: the page existed and the context owned it, but nothing
+       registered it, so list_tabs omitted it and every locator 404'd. -->
+  <a id="blank" href="opened.html" target="_blank">open in a new tab</a>
+  <button id="wopen" onclick="window.open('opened.html', '_blank')">window.open</button>
+</body></html>

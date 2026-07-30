@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+### Fixed
+
+- **A page-opened tab was invisible.** `window.open` and `target="_blank"`
+  produced a live page the context owned but never registered, so `list_tabs`
+  omitted it and every locator against it 404'd as an unknown tab. Every page
+  the context opens is now adopted, with console/network capture attached, and
+  dropped from the registry when the browser closes it. Known limitation: the
+  popup's own first navigation may land before capture attaches —
+  `context.on("page")` is the earliest hook there is — so assert that response
+  on the opener, not the popup.
+
 ## [2.3.0] - 2026-07-24
 
 ### Added

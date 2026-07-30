@@ -114,15 +114,34 @@ class ManagedContext:
     def idle_s(self) -> float:
         return time.monotonic() - self.last_activity
 
+    def adopt(self, page: Page) -> ManagedTab:
+        """Register a page this context owns but did not open through open_tab.
+
+        Two sources: the blank page a persistent context is born with, and any
+        page the SITE opens (``window.open``, ``target="_blank"``). The second
+        used to be invisible — it never entered ``_tabs``, so ``list_tabs``
+        lied and every locator against it 404'd as an unknown tab. A popup is a
+        first-class tab.
+        """
+        tab_id = f"{self.id}:{self._next_tab}"
+        self._next_tab += 1
+        tab = ManagedTab(tab_id, page, self)
+        install_dialog_handler(tab)
+        self._tabs[tab_id] = tab
+        # Keep list_tabs truthful when the browser closes a page on its own.
+        page.on("close", lambda _p: self._forget(tab_id))
+        return tab
+
+    def _forget(self, tab_id: str) -> None:
+        self._tabs.pop(tab_id, None)
+        self._cdp.pop(tab_id, None)
+
     def adopt_existing_pages(self) -> None:
-        """Register pages the context was born with (a persistent context opens
-        with one blank page) so list_tabs stays truthful and they are not leaked."""
+        """Register the pages the context was born with, and every page it
+        opens from here on, so list_tabs stays truthful and none are leaked."""
         for page in self.pw_context.pages:
-            tab_id = f"{self.id}:{self._next_tab}"
-            self._next_tab += 1
-            tab = ManagedTab(tab_id, page, self)
-            install_dialog_handler(tab)
-            self._tabs[tab_id] = tab
+            self.adopt(page)
+        self.pw_context.on("page", self.adopt)
 
     @property
     def controller(self):
@@ -342,6 +361,9 @@ class Engine:
                 ctx_id, pw_ctx, self, profile=profile, mode="ephemeral",
                 dialog_policy=dialog_policy,
             )
+            # An ephemeral context is born with no pages, but it still needs the
+            # on("page") registration — a site here opens popups just the same.
+            ctx.adopt_existing_pages()
         else:
             raise ValueError(f"unknown context mode: {mode!r} (expected ephemeral or attached)")
 
