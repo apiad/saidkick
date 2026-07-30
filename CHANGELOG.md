@@ -4,6 +4,14 @@ All notable changes to this project are documented here. Format: Keep a Changelo
 
 ## [Unreleased]
 
+### Added
+
+- **`click` accepts `button`**, so a context menu is reachable. `actions.click`
+  always forwarded `**kwargs` to Playwright, but the REST dispatch dropped every
+  body key except the locator — the capability existed in the library and was
+  unreachable over the wire, leaving any right-click-only affordance
+  undriveable.
+
 ### Fixed
 
 - **A page-opened tab was invisible.** `window.open` and `target="_blank"`

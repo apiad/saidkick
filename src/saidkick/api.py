@@ -44,7 +44,10 @@ log = logging.getLogger("saidkick.api")
 COCKPIT = Path(__file__).parent / "cockpit"
 
 ACTIONS = {
-    "click": lambda tab, loc, body: A.click(tab, loc),
+    # `button` is forwarded because a context menu is not reachable without it,
+    # and a whole class of app affordance lives behind one. actions.click has
+    # always passed **kwargs to Playwright; only the dispatch dropped them.
+    "click": lambda tab, loc, body: A.click(tab, loc, button=body.get("button", "left")),
     "type": lambda tab, loc, body: A.type_text(
         tab, loc, body.get("text", ""), submit=body.get("submit", False)
     ),

@@ -135,8 +135,10 @@ class SaidkickClient:
         body = {**self._locator(locator), **extra}
         return self._json(self._client.post(f"/tabs/{tab}/{action}", json=body))
 
-    def click(self, tab: str, **locator: Any) -> Any:
-        return self._act(tab, "click", {}, locator)
+    def click(self, tab: str, button: str = "left", **locator: Any) -> Any:
+        """Click an element. `button="right"` opens a context menu — the only
+        way to reach an affordance that has no left-click equivalent."""
+        return self._act(tab, "click", {"button": button}, locator)
 
     def type(self, tab: str, text: str, submit: bool = False, **locator: Any) -> Any:
         return self._act(tab, "type", {"text": text, "submit": submit}, locator)

@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>context menu</title></head>
+<body>
+  <div id="target">right-click me</div>
+  <div id="menu" hidden>menu is open</div>
+  <script>
+    // A right-click-only affordance. magpie's "Analyze in Superbot" /
+    // "Visualize in Peacock" handoffs live in exactly this shape, so if the
+    // driver cannot send button=right they cannot be tested at all.
+    document.getElementById('target').addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      document.getElementById('menu').hidden = false;
+    });
+  </script>
+</body></html>
