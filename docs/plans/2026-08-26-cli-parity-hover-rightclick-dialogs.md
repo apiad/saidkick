@@ -91,6 +91,25 @@ else's software:
       > its message from `raise_for_status()` and never read the body — two
       > layers, both needing the fix. Here the consumer is already correct and
       > only the producer is wrong. The lesson is the check, not the count.
+- [ ] **Make `find` report WHY a match is unpickable.** Driving superbot's
+      conversation list, `find --by-role button` returned a column of bare
+      `BUTTON` entries with nothing to tell them apart, and `--css … ` returned
+      `LocatorAmbiguous: found 12 matches`. Both are accurate and neither is
+      actionable: the agent cannot tell whether the elements are genuinely
+      indistinguishable, hidden, or merely unnamed. Two agents independently
+      stalled there the same day, and the safe move — refusing to pick a
+      destructive control positionally — is the *correct* one, so the tool
+      should make it unnecessary rather than punish it.
+
+      Suggested: have `find` print, per match, the accessible name (or
+      `<unnamed>`), whether it is in the a11y tree, and the computed visibility.
+      `12 matches, all <unnamed>, all visibility:hidden` diagnoses the page in
+      one line; `found 12 matches` does not.
+
+      (The AInBox side of that particular case is fixed — those buttons now
+      carry distinguishing `aria-label`s and reveal on `:focus-within`. The
+      saidkick-side gap is what an agent sees when they *don't*.)
+
 - [ ] **Update `SKILL.md`.** It documents "no `exec` command in 2.x" but says
       nothing about CLI-vs-API parity, which is what sends agents to the wrong
       conclusion. State plainly which capabilities are API/client-only, and that
