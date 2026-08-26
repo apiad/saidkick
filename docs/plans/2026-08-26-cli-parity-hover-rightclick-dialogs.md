@@ -61,13 +61,36 @@ else's software:
 - [ ] **Add `saidkick dialogs` and `saidkick dialog --accept/--dismiss [--text]`**,
       plus `client` methods for both. `requests` already exists for the
       `ask_human` path; this is the missing half.
-- [ ] **Triage the bare 500.** Two shapes produced an untyped
-      `500 Internal Server Error` from the CLI rather than a saidkick error:
-      (a) clicking a `visibility: hidden` element — should be a typed
-      actionability/`ElementNotInteractable` error naming the locator and the
-      reason; (b) `--css <sel> --nth <n>` — `locators.py:101` supports `nth`, so
-      this needs an actual repro before assuming a cause. A 500 with no body is
-      the least useful thing the CLI can say.
+- [ ] **Map actionability failures to a typed error — it is the DAEMON layer,
+      not the CLI.** Traced 2026-08-26 rather than assumed, and the answer is
+      narrower than "the 500 is untyped everywhere":
+
+      - `cli.py:handle_client_error` already reads `{error, detail}` off the
+        response body and only falls back to `str(exc)` — httpx's
+        `raise_for_status()` message — when the body is not that shape.
+      - `api.py:127` already turns any `SaidkickError` into
+        `JSONResponse(status=exc.status, content=http_detail(exc))`.
+      - Both work: `LocatorAmbiguous: found 12 matches for css=…` and
+        `LocatorNotFound` render perfectly through this path.
+
+      So a bare `Server error '500 Internal Server Error' for url …` means the
+      exception never became a `SaidkickError` and escaped to FastAPI's default
+      handler with no body to read. Clicking a `visibility: hidden` element
+      (Playwright refuses on actionability) is a confirmed producer. `--css
+      <sel> --nth <n>` produced the same shape and is NOT yet explained —
+      `locators.py:101` supports `nth`, so reproduce it before assuming a cause.
+
+      Fix: catch Playwright's `TimeoutError`/actionability failures in
+      `actions.py` and raise a typed `ElementNotInteractable` naming the locator
+      AND the reason ("matched, but `visibility: hidden` — try `hover` first"),
+      which is the sentence that would have saved this session an hour.
+
+      > **Check both layers even when one looks obviously guilty.** Credit to
+      > the agent who fixed AInBox's sandbox pin the same day: there, typing the
+      > service's 500 would have changed *nothing*, because the consumer built
+      > its message from `raise_for_status()` and never read the body — two
+      > layers, both needing the fix. Here the consumer is already correct and
+      > only the producer is wrong. The lesson is the check, not the count.
 - [ ] **Update `SKILL.md`.** It documents "no `exec` command in 2.x" but says
       nothing about CLI-vs-API parity, which is what sends agents to the wrong
       conclusion. State plainly which capabilities are API/client-only, and that
